@@ -18,11 +18,35 @@ import (
 	lchstmgr "github.com/filecoin-project/lotus/chain/stmgr"
 	lchtypes "github.com/filecoin-project/lotus/chain/types"
 
+	blocks "github.com/ipfs/go-block-format"
+	"github.com/ipfs/go-cid"
+	blockstore "github.com/ipfs/go-ipfs-blockstore"
 	ipldcbor "github.com/ipfs/go-ipld-cbor"
 
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/xerrors"
 )
+
+type countingBlockstore struct {
+	blockstore.Blockstore
+	mx sync.Mutex
+	m  map[cid.Cid]int
+}
+
+func (c *countingBlockstore) Get(ctx context.Context, cid cid.Cid) (blocks.Block, error) {
+	blk, err := c.Blockstore.Get(ctx, cid)
+	if err != nil {
+		return nil, err
+	}
+
+	c.mx.Lock()
+	c.m[cid] = len(blk.RawData())
+	c.mx.Unlock()
+
+	return blk, nil
+}
+
+var _ blockstore.Blockstore = (*countingBlockstore)(nil)
 
 func getCoins(ctx context.Context, srcSnapshot string, addr filaddr.Address) (defErr error) {
 	carbs, err := blockstoreFromSnapshot(ctx, srcSnapshot)
@@ -37,7 +61,8 @@ func getCoins(ctx context.Context, srcSnapshot string, addr filaddr.Address) (de
 	}
 	tsk = lchtypes.NewTipSetKey(carRoots...)
 
-	sm, err := newFilStateReader(carbs)
+	cbs := &countingBlockstore{Blockstore: carbs, m: make(map[cid.Cid]int)}
+	sm, err := newFilStateReader(cbs)
 	if err != nil {
 		return xerrors.Errorf("unable to initialize a StateManager: %w", err)
 	}
@@ -78,8 +103,14 @@ func getCoins(ctx context.Context, srcSnapshot string, addr filaddr.Address) (de
 	if err != nil {
 		return err
 	}
-	fmt.Printf("total attofil: %s\n", foundAttoFil)
 
+	fmt.Printf("total attofil: %s\n", foundAttoFil)
+	fmt.Printf("total blocks read: %d\n", len(cbs.m))
+	totalSizeBytes := 0
+	for _, v := range cbs.m {
+		totalSizeBytes += v
+	}
+	fmt.Printf("total block sizes: %d\n", totalSizeBytes)
 	return
 }
 
@@ -96,12 +127,10 @@ func parseActors(ctx context.Context, sm *lchstmgr.StateManager, ts *lchtypes.Ti
 	}
 
 	var mx sync.Mutex
-
 	return stateTree.ForEach(func(addr filaddr.Address, act *lchtypes.Actor) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-
 		switch {
 		case lbi.IsMultisigActor(act.Code):
 			ms, err := lbimsig.Load(ast, act)
