@@ -18,6 +18,11 @@ import (
 	lchstmgr "github.com/filecoin-project/lotus/chain/stmgr"
 	lchtypes "github.com/filecoin-project/lotus/chain/types"
 
+	"github.com/filecoin-project/go-hamt-ipld/v3"
+	"github.com/filecoin-project/go-state-types/builtin"
+	"github.com/filecoin-project/go-state-types/builtin/v10/util/adt"
+	cbg "github.com/whyrusleeping/cbor-gen"
+
 	blocks "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
 	blockstore "github.com/ipfs/go-ipfs-blockstore"
@@ -49,6 +54,11 @@ func (c *countingBlockstore) Get(ctx context.Context, cid cid.Cid) (blocks.Block
 var _ blockstore.Blockstore = (*countingBlockstore)(nil)
 
 func getCoins(ctx context.Context, srcSnapshot string, addr filaddr.Address) (defErr error) {
+	start := time.Now()
+	defer func() {
+		fmt.Printf("duration: %v\n", time.Since(start))
+	}()
+
 	carbs, err := blockstoreFromSnapshot(ctx, srcSnapshot)
 	if err != nil {
 		return err
@@ -126,8 +136,31 @@ func parseActors(ctx context.Context, sm *lchstmgr.StateManager, ts *lchtypes.Ti
 		return err
 	}
 
+	var root lchtypes.StateRoot
+	// Try loading as a new-style state-tree (version/actors tuple).
+	if err := ast.Get(context.TODO(), ts.ParentState(), &root); err != nil {
+		return err
+	}
+
+	hamtOptions := append(adt.DefaultHamtOptions, hamt.UseTreeBitWidth(builtin.DefaultHamtBitwidth))
+	node, err := hamt.LoadNode(ctx, ast, root.Actors, hamtOptions...)
+	if err != nil {
+		return err
+	}
+
 	var mx sync.Mutex
-	return stateTree.ForEach(func(addr filaddr.Address, act *lchtypes.Actor) error {
+	return node.ForEach(ctx, func(k string, val *cbg.Deferred) error {
+		act := &lchtypes.Actor{}
+		addr, err := filaddr.NewFromBytes([]byte(k))
+		if err != nil {
+			return xerrors.Errorf("invalid address (%x) found in state tree key: %w", []byte(k), err)
+		}
+
+		err = act.UnmarshalCBOR(bytes.NewReader(val.Raw))
+		if err != nil {
+			return err
+		}
+
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
