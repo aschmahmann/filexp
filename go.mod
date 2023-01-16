@@ -169,3 +169,6 @@ require (
 
 //replace github.com/filecoin-project/filecoin-ffi => github.com/filecoin-project/ffi-stub v0.3.1-0.20220531143624-1d167a7a6263
 replace github.com/filecoin-project/filecoin-ffi => github.com/filecoin-project/ffi-stub v0.3.1-0.20221125083217-e843ea68587a
+
+replace github.com/filecoin-project/go-hamt-ipld/v3 => ../../filecoin-project/go-hamt-ipld
+replace github.com/filecoin-project/lotus => ../../filecoin-project/lotus

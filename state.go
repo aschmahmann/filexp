@@ -28,6 +28,8 @@ import (
 	blockstore "github.com/ipfs/go-ipfs-blockstore"
 	ipldcbor "github.com/ipfs/go-ipld-cbor"
 
+	"github.com/ribasushi/fil-fip36-vote-tally/ephemeralbs"
+
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/xerrors"
 )
@@ -64,6 +66,8 @@ func getCoins(ctx context.Context, srcSnapshot string, addr filaddr.Address) (de
 		return err
 	}
 
+	fmt.Printf("duration to load snapshot: %v\n", time.Since(start))
+
 	var tsk lchtypes.TipSetKey
 	carRoots, err := carbs.Roots()
 	if err != nil {
@@ -72,7 +76,8 @@ func getCoins(ctx context.Context, srcSnapshot string, addr filaddr.Address) (de
 	tsk = lchtypes.NewTipSetKey(carRoots...)
 
 	cbs := &countingBlockstore{Blockstore: carbs, m: make(map[cid.Cid]int)}
-	sm, err := newFilStateReader(cbs)
+	ebs := ephemeralbs.NewEphemeralBlockstore(cbs)
+	sm, err := newFilStateReader(ebs)
 	if err != nil {
 		return xerrors.Errorf("unable to initialize a StateManager: %w", err)
 	}
@@ -124,8 +129,55 @@ func getCoins(ctx context.Context, srcSnapshot string, addr filaddr.Address) (de
 	return
 }
 
+type getManyCborStore struct {
+	*ipldcbor.BasicIpldStore
+}
+
+func (g *getManyCborStore) GetMany(ctx context.Context, cids []cid.Cid, outs []interface{}) <-chan *hamt.OptionalInteger {
+	outCh := make(chan *hamt.OptionalInteger)
+	wg := sync.WaitGroup{}
+	processingCh := make(chan int)
+	go func() {
+		for i := 0; i < len(cids); i++ {
+			processingCh <- i
+		}
+		close(processingCh)
+	}()
+	const concurrency = 8
+	wg.Add(concurrency)
+	for i := 0; i < concurrency; i++ {
+		go func() {
+			defer wg.Done()
+			for index := range processingCh {
+				c := cids[index]
+				o := outs[index]
+				err := g.Get(ctx, c, o)
+				if err != nil {
+					outCh <- &hamt.OptionalInteger{Error: err}
+				} else {
+					outCh <- &hamt.OptionalInteger{Value: index}
+				}
+			}
+		}()
+	}
+
+	go func() {
+		wg.Wait()
+		close(outCh)
+	}()
+	return outCh
+}
+
+type getManyIPLDStore interface {
+	GetMany(ctx context.Context, cids []cid.Cid, outs []interface{}) <-chan *hamt.OptionalInteger
+}
+
+var _ getManyIPLDStore = (*getManyCborStore)(nil)
+
 func parseActors(ctx context.Context, sm *lchstmgr.StateManager, ts *lchtypes.TipSet, rootAddr filaddr.Address, foundAttoFil abi.TokenAmount) error {
 	ast := lchadt.WrapStore(ctx, ipldcbor.NewCborStore(sm.ChainStore().UnionStore()))
+	getManyAst := &getManyCborStore{
+		BasicIpldStore: ipldcbor.NewCborStore(sm.ChainStore().StateBlockstore())}
 
 	stateTree, err := sm.StateTree(ts.ParentState())
 	if err != nil {
@@ -143,13 +195,13 @@ func parseActors(ctx context.Context, sm *lchstmgr.StateManager, ts *lchtypes.Ti
 	}
 
 	hamtOptions := append(adt.DefaultHamtOptions, hamt.UseTreeBitWidth(builtin.DefaultHamtBitwidth))
-	node, err := hamt.LoadNode(ctx, ast, root.Actors, hamtOptions...)
+	node, err := hamt.LoadNode(ctx, getManyAst, root.Actors, hamtOptions...)
 	if err != nil {
 		return err
 	}
 
 	var mx sync.Mutex
-	return node.ForEach(ctx, func(k string, val *cbg.Deferred) error {
+	return node.ForEachParallel(ctx, func(k string, val *cbg.Deferred) error {
 		act := &lchtypes.Actor{}
 		addr, err := filaddr.NewFromBytes([]byte(k))
 		if err != nil {

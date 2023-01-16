@@ -3,15 +3,14 @@ package main
 import (
 	"context"
 	"github.com/filecoin-project/go-address"
+	lotusbs "github.com/filecoin-project/lotus/blockstore"
 	"github.com/filecoin-project/lotus/chain/stmgr"
 	chainstore "github.com/filecoin-project/lotus/chain/store"
 	"github.com/ipfs/go-cid"
 	ds "github.com/ipfs/go-datastore"
-	ipfsbs "github.com/ipfs/go-ipfs-blockstore"
 	"github.com/ipld/go-car/v2"
 	carbs "github.com/ipld/go-car/v2/blockstore"
 	caridx "github.com/ipld/go-car/v2/index"
-	"github.com/ribasushi/fil-fip36-vote-tally/ephemeralbs"
 	"golang.org/x/xerrors"
 	"log"
 	"os"
@@ -33,12 +32,11 @@ func mustAddrID(a address.Address) uint64 {
 	return i
 }
 
-func newFilStateReader(bs ipfsbs.Blockstore) (*stmgr.StateManager, error) {
-	ebs := ephemeralbs.NewEphemeralBlockstore(bs)
+func newFilStateReader(bs lotusbs.Blockstore) (*stmgr.StateManager, error) {
 	return stmgr.NewStateManager(
 		chainstore.NewChainStore(
-			ebs,
-			ebs,
+			bs,
+			bs,
 			ds.NewMapDatastore(),
 			nil,
 			nil,
