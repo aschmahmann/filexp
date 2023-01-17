@@ -4,7 +4,10 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"os"
+	leveldb "github.com/ipfs/go-ds-leveldb"
+	exchange "github.com/ipfs/go-ipfs-exchange-interface"
+	ipld "github.com/ipfs/go-ipld-format"
+	"github.com/ipfs/go-verifcid"
 	"sync"
 	"time"
 
@@ -55,7 +58,7 @@ func (c *countingBlockstore) Get(ctx context.Context, cid cid.Cid) (blocks.Block
 
 var _ blockstore.Blockstore = (*countingBlockstore)(nil)
 
-func getCoins(ctx context.Context, srcSnapshot string, addr filaddr.Address) (defErr error) {
+func getCoinsFromCar(ctx context.Context, srcSnapshot string, addr filaddr.Address) (defErr error) {
 	start := time.Now()
 	defer func() {
 		fmt.Printf("duration: %v\n", time.Since(start))
@@ -75,7 +78,119 @@ func getCoins(ctx context.Context, srcSnapshot string, addr filaddr.Address) (de
 	}
 	tsk = lchtypes.NewTipSetKey(carRoots...)
 
-	cbs := &countingBlockstore{Blockstore: carbs, m: make(map[cid.Cid]int)}
+	return getCoins(ctx, carbs, tsk, addr)
+}
+
+func getCoinsFromBitswap(ctx context.Context, tsk lchtypes.TipSetKey, addr filaddr.Address) (defErr error) {
+	start := time.Now()
+	defer func() {
+		fmt.Printf("duration: %v\n", time.Since(start))
+	}()
+
+	h, bsc, err := setupContentFetching(ctx)
+	if err != nil {
+		return err
+	}
+	_ = h
+
+	go func() {
+		ticker := time.NewTicker(10 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				peers := h.Network().Peers()
+				nPeersWithBitswap := 0
+				for _, p := range peers {
+					retProto, err := h.Peerstore().FirstSupportedProtocol(p, "/chain/ipfs/bitswap/1.2.0")
+					if err != nil || retProto == "" {
+						continue
+					}
+					nPeersWithBitswap++
+				}
+				nwants := len(bsc.GetWantlist())
+				fmt.Printf("numPeers: %d, nPeersWithBitswap: %d numWants: %d \n", len(peers), nPeersWithBitswap, nwants)
+			}
+		}
+	}()
+
+	lds, err := leveldb.NewDatastore("", nil)
+	if err != nil {
+		return err
+	}
+	baseBstore := blockstore.NewBlockstore(lds)
+	bs := blockstore.NewIdStore(&bservBstoreWrapper{Blockstore: baseBstore, bserv: bsc.NewSession(ctx)})
+
+	fmt.Printf("duration to setup bitswap fetching: %v\n", time.Since(start))
+
+	return getCoins(ctx, bs, tsk, addr)
+}
+
+// this is the wrong way around, but this is the easiest way to hack it
+type bservBstoreWrapper struct {
+	blockstore.Blockstore
+	bserv exchange.Fetcher
+}
+
+func (b *bservBstoreWrapper) Get(ctx context.Context, c cid.Cid) (blocks.Block, error) {
+	err := verifcid.ValidateCid(c) // hash security
+	if err != nil {
+		return nil, err
+	}
+
+	block, err := b.Blockstore.Get(ctx, c)
+	if err == nil {
+		return block, nil
+	}
+
+	if ipld.IsNotFound(err) {
+		// TODO be careful checking ErrNotFound. If the underlying
+		// implementation changes, this will break.
+		blk, err := b.bserv.GetBlock(ctx, c)
+		if err != nil {
+			return nil, err
+		}
+		// also write in the blockstore for caching
+		err = b.Blockstore.Put(ctx, blk)
+		if err != nil {
+			return nil, err
+		}
+		return blk, nil
+	}
+
+	return nil, err
+}
+
+func (b *bservBstoreWrapper) GetSize(ctx context.Context, c cid.Cid) (int, error) {
+	has, err := b.Blockstore.Has(ctx, c)
+	if has {
+		return b.Blockstore.GetSize(ctx, c)
+	}
+	if !ipld.IsNotFound(err) {
+		// TODO be careful checking ErrNotFound. If the underlying
+		// implementation changes, this will break.
+		return 0, err
+	}
+
+	blk, err := b.bserv.GetBlock(ctx, c)
+	if err != nil {
+		return 0, err
+	}
+	// also write in the blockstore for caching
+	err = b.Blockstore.Put(ctx, blk)
+	if err != nil {
+		return 0, err
+	}
+
+	return len(blk.RawData()), nil
+}
+
+var _ blockstore.Blockstore = (*bservBstoreWrapper)(nil)
+
+func getCoins(ctx context.Context, bstore blockstore.Blockstore, tsk lchtypes.TipSetKey, addr filaddr.Address) (defErr error) {
+	cbs := &countingBlockstore{Blockstore: bstore, m: make(map[cid.Cid]int)}
 	ebs := ephemeralbs.NewEphemeralBlockstore(cbs)
 	sm, err := newFilStateReader(ebs)
 	if err != nil {
@@ -91,24 +206,18 @@ func getCoins(ctx context.Context, srcSnapshot string, addr filaddr.Address) (de
 
 	foundAttoFil := abi.NewTokenAmount(0)
 
-	printStats := func() {
-		os.Stderr.WriteString(fmt.Sprintf( //nolint:errcheck
-			"Found attofil: % 5d\r", foundAttoFil.Uint64(),
-		),
-		)
-	}
-
 	go func() {
-		ticker := time.NewTicker(2 * time.Second)
+		ticker := time.NewTicker(10 * time.Second)
 		defer ticker.Stop()
 		for {
 			select {
 			case <-shCtx.Done():
-				printStats()
-				os.Stderr.WriteString("\n") //nolint:errcheck
 				return
 			case <-ticker.C:
-				printStats()
+				cbs.mx.Lock()
+				nb := len(cbs.m)
+				cbs.mx.Unlock()
+				fmt.Printf("numberOfBlocksLoaded: %d \n", nb)
 			}
 		}
 	}()
