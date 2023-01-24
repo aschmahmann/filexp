@@ -13,9 +13,25 @@ import (
 	lotusapi "github.com/filecoin-project/lotus/api"
 	"github.com/filecoin-project/lotus/chain/types"
 	"github.com/ipfs/go-cid"
+	bstore "github.com/ipfs/go-ipfs-blockstore"
 
 	"github.com/urfave/cli/v2"
 )
+
+var stateFlags = []cli.Flag{
+	&cli.PathFlag{
+		Name:  "car",
+		Usage: "path to state CAR",
+	},
+	&cli.StringSliceFlag{
+		Name:  "tipset-cids",
+		Usage: "tipset CIDs for use when downloading state over the network",
+	},
+	&cli.BoolFlag{
+		Name:  "trust-chainlove",
+		Usage: "ask chain.love for the state from roughly 2 hours ago",
+	},
+}
 
 func main() {
 	app := &cli.App{
@@ -26,20 +42,7 @@ func main() {
 				Name:        "msig-coins",
 				Usage:       "<signer-key>",
 				Description: "Add up all of the coins controlled by multisigs with the given signer and signing threshold of 1. Either pass a state CAR, tipset CIDs, or trust chain.love for a recent time",
-				Flags: []cli.Flag{
-					&cli.PathFlag{
-						Name:  "car",
-						Usage: "path to state CAR",
-					},
-					&cli.StringSliceFlag{
-						Name:  "tipset-cids",
-						Usage: "tipset CIDs for use when downloading state over the network",
-					},
-					&cli.BoolFlag{
-						Name:  "trust-chainlove",
-						Usage: "ask chain.love for the state from roughly 2 hours ago",
-					},
-				},
+				Flags:       stateFlags,
 				Action: func(ctx *cli.Context) error {
 					args := ctx.Args()
 					signerKey := args.Get(0)
@@ -48,55 +51,30 @@ func main() {
 						return err
 					}
 
-					carSet := ctx.IsSet("car")
-					tsSet := ctx.IsSet("tipset-cids")
-					clSet := ctx.IsSet("trust-chainlove")
-
-					if carSet {
-						carLocation := ctx.String("car")
-						if tsSet || clSet {
-							return fmt.Errorf("choose only one of CAR, tipset-cids, or trust-chainlove")
-						}
-						return getCoinsFromCar(ctx.Context, carLocation, signerAddr)
+					bs, tsk, err := getState(ctx)
+					if err != nil {
+						return err
 					}
 
-					var tsk types.TipSetKey
-
-					if tsSet {
-						if clSet {
-							return fmt.Errorf("choose only one of CAR, tipset-cids, or trust-chainlove")
-						}
-						cidStrs := ctx.StringSlice("tipset-cids")
-						var cids []cid.Cid
-						for _, s := range cidStrs {
-							c, err := cid.Decode(s)
-							if err != nil {
-								return err
-							}
-							cids = append(cids, c)
-						}
-						tsk = types.NewTipSetKey(cids...)
+					return getCoins(ctx.Context, bs, tsk, signerAddr)
+				},
+			},
+			{
+				Name:        "enumerate-actors",
+				Description: "List all actors. Either pass a state CAR, tipset CIDs, or trust chain.love for a recent time",
+				Flags: append([]cli.Flag{
+					&cli.BoolFlag{
+						Name:        "count-only",
+						Value:       false,
+						DefaultText: "will not emit the actor IDs, and just count them",
+					},
+				}, stateFlags...),
+				Action: func(ctx *cli.Context) error {
+					bs, tsk, err := getState(ctx)
+					if err != nil {
+						return err
 					}
-
-					if clSet {
-						addr := "api.chain.love"
-						var api lotusapi.FullNodeStruct
-						closer, err := jsonrpc.NewMergeClient(context.Background(), "ws://"+addr+"/rpc/v0", "Filecoin", []interface{}{&api.Internal, &api.CommonStruct.Internal}, nil)
-						if err != nil {
-							log.Fatalf("connecting with lotus API failed: %s", err)
-						}
-						defer closer()
-
-						chainHeightTwoHoursAgo := (time.Now().Add(-2*time.Hour).Unix() - 1598306400) / 30
-						tipset, err := api.ChainGetTipSetByHeight(ctx.Context, abi.ChainEpoch(chainHeightTwoHoursAgo), types.TipSetKey{})
-						if err != nil {
-							log.Fatalf("could not get chain tipset from height %d: %s", chainHeightTwoHoursAgo, err)
-						}
-						fmt.Printf("using chainheight %d, with reported tipset %s\n", chainHeightTwoHoursAgo, tipset)
-						tsk = tipset.Key()
-					}
-
-					return getCoinsFromBitswap(ctx.Context, tsk, signerAddr)
+					return getActors(ctx.Context, bs, tsk, ctx.Bool("count-only"))
 				},
 			},
 		},
@@ -106,4 +84,60 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+}
+
+func getState(ctx *cli.Context) (bstore.Blockstore, types.TipSetKey, error) {
+	carSet := ctx.IsSet("car")
+	tsSet := ctx.IsSet("tipset-cids")
+	clSet := ctx.IsSet("trust-chainlove")
+
+	if carSet {
+		carLocation := ctx.String("car")
+		if tsSet || clSet {
+			return nil, types.EmptyTSK, fmt.Errorf("choose only one of CAR, tipset-cids, or trust-chainlove")
+		}
+		bs, tsk, err := getStateFromCar(ctx.Context, carLocation)
+		if err != nil {
+			return nil, types.EmptyTSK, err
+		}
+		return bs, tsk, nil
+	}
+
+	var tsk types.TipSetKey
+
+	if tsSet {
+		if clSet {
+			return nil, types.EmptyTSK, fmt.Errorf("choose only one of CAR, tipset-cids, or trust-chainlove")
+		}
+		cidStrs := ctx.StringSlice("tipset-cids")
+		var cids []cid.Cid
+		for _, s := range cidStrs {
+			c, err := cid.Decode(s)
+			if err != nil {
+				return nil, types.EmptyTSK, err
+			}
+			cids = append(cids, c)
+		}
+		tsk = types.NewTipSetKey(cids...)
+	}
+
+	if clSet {
+		addr := "api.chain.love"
+		var api lotusapi.FullNodeStruct
+		closer, err := jsonrpc.NewMergeClient(context.Background(), "ws://"+addr+"/rpc/v0", "Filecoin", []interface{}{&api.Internal, &api.CommonStruct.Internal}, nil)
+		if err != nil {
+			log.Fatalf("connecting with lotus API failed: %s", err)
+		}
+		defer closer()
+
+		chainHeightTwoHoursAgo := (time.Now().Add(-2*time.Hour).Unix() - 1598306400) / 30
+		tipset, err := api.ChainGetTipSetByHeight(ctx.Context, abi.ChainEpoch(chainHeightTwoHoursAgo), types.TipSetKey{})
+		if err != nil {
+			log.Fatalf("could not get chain tipset from height %d: %s", chainHeightTwoHoursAgo, err)
+		}
+		fmt.Printf("using chainheight %d, with reported tipset %s\n", chainHeightTwoHoursAgo, tipset)
+		tsk = tipset.Key()
+	}
+
+	return getStateDynamicallyLoadedFromBitswap(ctx.Context, tsk)
 }

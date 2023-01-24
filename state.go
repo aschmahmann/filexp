@@ -9,6 +9,7 @@ import (
 	ipld "github.com/ipfs/go-ipld-format"
 	"github.com/ipfs/go-verifcid"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	filaddr "github.com/filecoin-project/go-address"
@@ -58,7 +59,7 @@ func (c *countingBlockstore) Get(ctx context.Context, cid cid.Cid) (blocks.Block
 
 var _ blockstore.Blockstore = (*countingBlockstore)(nil)
 
-func getCoinsFromCar(ctx context.Context, srcSnapshot string, addr filaddr.Address) (defErr error) {
+func getStateFromCar(ctx context.Context, srcSnapshot string) (blockstore.Blockstore, lchtypes.TipSetKey, error) {
 	start := time.Now()
 	defer func() {
 		fmt.Printf("duration: %v\n", time.Since(start))
@@ -66,7 +67,7 @@ func getCoinsFromCar(ctx context.Context, srcSnapshot string, addr filaddr.Addre
 
 	carbs, err := blockstoreFromSnapshot(ctx, srcSnapshot)
 	if err != nil {
-		return err
+		return nil, lchtypes.EmptyTSK, err
 	}
 
 	fmt.Printf("duration to load snapshot: %v\n", time.Since(start))
@@ -74,14 +75,14 @@ func getCoinsFromCar(ctx context.Context, srcSnapshot string, addr filaddr.Addre
 	var tsk lchtypes.TipSetKey
 	carRoots, err := carbs.Roots()
 	if err != nil {
-		return err
+		return nil, lchtypes.EmptyTSK, err
 	}
 	tsk = lchtypes.NewTipSetKey(carRoots...)
 
-	return getCoins(ctx, carbs, tsk, addr)
+	return carbs, tsk, nil
 }
 
-func getCoinsFromBitswap(ctx context.Context, tsk lchtypes.TipSetKey, addr filaddr.Address) (defErr error) {
+func getStateDynamicallyLoadedFromBitswap(ctx context.Context, tsk lchtypes.TipSetKey) (blockstore.Blockstore, lchtypes.TipSetKey, error) {
 	start := time.Now()
 	defer func() {
 		fmt.Printf("duration: %v\n", time.Since(start))
@@ -89,7 +90,7 @@ func getCoinsFromBitswap(ctx context.Context, tsk lchtypes.TipSetKey, addr filad
 
 	h, bsc, err := setupContentFetching(ctx)
 	if err != nil {
-		return err
+		return nil, lchtypes.EmptyTSK, err
 	}
 	_ = h
 
@@ -118,14 +119,14 @@ func getCoinsFromBitswap(ctx context.Context, tsk lchtypes.TipSetKey, addr filad
 
 	lds, err := leveldb.NewDatastore("", nil)
 	if err != nil {
-		return err
+		return nil, lchtypes.EmptyTSK, err
 	}
 	baseBstore := blockstore.NewBlockstore(lds)
 	bs := blockstore.NewIdStore(&bservBstoreWrapper{Blockstore: baseBstore, bserv: bsc.NewSession(ctx)})
 
 	fmt.Printf("duration to setup bitswap fetching: %v\n", time.Since(start))
 
-	return getCoins(ctx, bs, tsk, addr)
+	return bs, tsk, nil
 }
 
 // this is the wrong way around, but this is the easiest way to hack it
@@ -367,4 +368,91 @@ func parseActors(ctx context.Context, sm *lchstmgr.StateManager, ts *lchtypes.Ti
 			return nil
 		}
 	})
+}
+
+func getActors(ctx context.Context, bstore blockstore.Blockstore, tsk lchtypes.TipSetKey, countOnly bool) error {
+	cbs := &countingBlockstore{Blockstore: bstore, m: make(map[cid.Cid]int)}
+	ebs := ephemeralbs.NewEphemeralBlockstore(cbs)
+	sm, err := newFilStateReader(ebs)
+	if err != nil {
+		return xerrors.Errorf("unable to initialize a StateManager: %w", err)
+	}
+
+	ts, err := sm.ChainStore().GetTipSetFromKey(ctx, tsk)
+	if err != nil {
+		return xerrors.Errorf("unable to load target tipset: %w", err)
+	}
+
+	eg, shCtx := errgroup.WithContext(ctx)
+
+	go func() {
+		ticker := time.NewTicker(10 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-shCtx.Done():
+				return
+			case <-ticker.C:
+				cbs.mx.Lock()
+				nb := len(cbs.m)
+				cbs.mx.Unlock()
+				fmt.Printf("numberOfBlocksLoaded: %d \n", nb)
+			}
+		}
+	}()
+
+	var numActors uint64
+
+	eg.Go(func() error {
+		ast := lchadt.WrapStore(ctx, ipldcbor.NewCborStore(sm.ChainStore().UnionStore()))
+		getManyAst := &getManyCborStore{
+			BasicIpldStore: ipldcbor.NewCborStore(sm.ChainStore().StateBlockstore())}
+
+		var root lchtypes.StateRoot
+		// Try loading as a new-style state-tree (version/actors tuple).
+		if err := ast.Get(context.TODO(), ts.ParentState(), &root); err != nil {
+			return err
+		}
+
+		hamtOptions := append(adt.DefaultHamtOptions, hamt.UseTreeBitWidth(builtin.DefaultHamtBitwidth))
+		node, err := hamt.LoadNode(ctx, getManyAst, root.Actors, hamtOptions...)
+		if err != nil {
+			return err
+		}
+
+		return node.ForEachParallel(ctx, func(k string, val *cbg.Deferred) error {
+			act := &lchtypes.Actor{}
+			addr, err := filaddr.NewFromBytes([]byte(k))
+			if err != nil {
+				return xerrors.Errorf("invalid address (%x) found in state tree key: %w", []byte(k), err)
+			}
+
+			err = act.UnmarshalCBOR(bytes.NewReader(val.Raw))
+			if err != nil {
+				return err
+			}
+
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			atomic.AddUint64(&numActors, 1)
+			if !countOnly {
+				fmt.Printf("%v\n", addr)
+			}
+			return nil
+		})
+	})
+	err = eg.Wait()
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("total actors found: %d\n", numActors)
+	fmt.Printf("total blocks read: %d\n", len(cbs.m))
+	totalSizeBytes := 0
+	for _, v := range cbs.m {
+		totalSizeBytes += v
+	}
+	fmt.Printf("total block sizes: %d\n", totalSizeBytes)
+	return nil
 }
