@@ -88,7 +88,7 @@ func getStateDynamicallyLoadedFromBitswap(ctx context.Context, tsk lchtypes.TipS
 		fmt.Printf("duration: %v\n", time.Since(start))
 	}()
 
-	h, bsc, err := setupContentFetching(ctx)
+	h, bsc, err := setupContentFetching2(ctx)
 	if err != nil {
 		return nil, lchtypes.EmptyTSK, err
 	}
@@ -105,7 +105,7 @@ func getStateDynamicallyLoadedFromBitswap(ctx context.Context, tsk lchtypes.TipS
 				peers := h.Network().Peers()
 				nPeersWithBitswap := 0
 				for _, p := range peers {
-					retProto, err := h.Peerstore().FirstSupportedProtocol(p, "/chain/ipfs/bitswap/1.2.0")
+					retProto, err := h.Peerstore().FirstSupportedProtocol(p, "/ipfs/bitswap/1.2.0")
 					if err != nil || retProto == "" {
 						continue
 					}

@@ -21,7 +21,7 @@ require (
 	github.com/ipfs/go-ipns v0.3.0
 	github.com/ipfs/go-verifcid v0.0.2
 	github.com/ipld/go-car/v2 v2.5.0
-	github.com/libp2p/go-libp2p v0.23.2
+	github.com/libp2p/go-libp2p v0.23.4
 	github.com/libp2p/go-libp2p-kad-dht v0.18.0
 	github.com/libp2p/go-libp2p-pubsub v0.8.2
 	github.com/ribasushi/fil-fip36-vote-tally v0.0.0-20220929092646-cad0b4225db2
@@ -137,6 +137,7 @@ require (
 	github.com/libp2p/go-libp2p-core v0.20.1 // indirect
 	github.com/libp2p/go-libp2p-kbucket v0.5.0 // indirect
 	github.com/libp2p/go-libp2p-record v0.2.0 // indirect
+	github.com/libp2p/go-mplex v0.7.0 // indirect
 	github.com/libp2p/go-msgio v0.2.0 // indirect
 	github.com/libp2p/go-nat v0.1.0 // indirect
 	github.com/libp2p/go-netroute v0.2.0 // indirect

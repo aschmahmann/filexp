@@ -18,6 +18,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/libp2p/go-libp2p/p2p/muxer/mplex"
 )
 
 var boostrappers = []string{
@@ -37,6 +38,44 @@ var boostrappers = []string{
 	"/dns4/bootstrap-0.ipfsmain.cn/tcp/34721/p2p/12D3KooWQnwEGNqcM2nAcPtRR9rAX8Hrg4k9kJLCHoTR5chJfz6d",
 	"/dns4/bootstrap-1.ipfsmain.cn/tcp/34723/p2p/12D3KooWMKxMkD5DMpSWsW7dBddKxKT7L2GgbNuckz9otxvkvByP",
 	"/dns4/bootstarp-0.1475.io/tcp/61256/p2p/12D3KooWRzCVDwHUkgdK7eRgnoXbjDAELhxPErjHzbRLguSV1aRt",
+}
+
+func setupContentFetching2(ctx context.Context) (host.Host, *bsclient.Client, error) {
+	h, err := libp2p.New(libp2p.ResourceManager(network.NullResourceManager), libp2p.DefaultMuxers, libp2p.Muxer("/mplex/6.7.0", mplex.DefaultTransport))
+	if err != nil {
+		return nil, nil, err
+	}
+
+	nr, err := nilrouting.ConstructNilRouting(ctx, nil, nil, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	nullBS := blockstore.NewBlockstore(datastore.NewNullDatastore())
+	n := bsnet.NewFromIpfsHost(h, nr)
+	bs := bsclient.New(ctx, n, nullBS)
+	n.Start(bs)
+
+	ai, err := peer.AddrInfoFromString("/dns4/elastic.dag.house/tcp/443/wss/p2p/QmQzqxhK82kAmKvARFZSkUVS6fo9sySaiogAnx5EnZ6ZmC")
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := h.Connect(ctx, *ai); err != nil {
+		return nil, nil, err
+	}
+
+	go func() {
+		t := time.NewTicker(time.Second * 5)
+		for {
+			select {
+			case <-t.C:
+				_ = h.Connect(ctx, *ai)
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	return h, bs, nil
 }
 
 func setupContentFetching(ctx context.Context) (host.Host, *bsclient.Client, error) {
