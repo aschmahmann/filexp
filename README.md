@@ -7,7 +7,11 @@ filexp
 
 Install Go and run:
 
-`go install github.com/aschmahmann/filexp`
+```
+git clone https://github.com/aschmahmann/filexp
+cd filexp
+go install
+```
 
 ## Running
 
