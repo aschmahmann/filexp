@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	bsclient "github.com/ipfs/go-bitswap/client"
-	bsnet "github.com/ipfs/go-bitswap/network"
+	bsclient "github.com/ipfs/boxo/bitswap/client"
+	bsnet "github.com/ipfs/boxo/bitswap/network"
 	"github.com/ipfs/go-datastore"
 	blockstore "github.com/ipfs/go-ipfs-blockstore"
 	nilrouting "github.com/ipfs/go-ipfs-routing/none"
@@ -40,7 +40,7 @@ var boostrappers = []string{
 }
 
 func setupContentFetching(ctx context.Context) (host.Host, *bsclient.Client, error) {
-	h, err := libp2p.New(libp2p.ResourceManager(network.NullResourceManager))
+	h, err := libp2p.New(libp2p.ResourceManager(&network.NullResourceManager{}))
 	if err != nil {
 		return nil, nil, err
 	}
