@@ -77,6 +77,26 @@ func main() {
 					return getActors(ctx.Context, bs, tsk, ctx.Bool("count-only"))
 				},
 			},
+			{
+				Name:        "get-balance",
+				Description: "Get the balance for a given actor. Either pass a state CAR, tipset CIDs, or trust chain.love for a recent time",
+				Flags:       append([]cli.Flag{}, stateFlags...),
+				Action: func(ctx *cli.Context) error {
+					args := ctx.Args()
+					actorAddrString := args.Get(0)
+					actorAddr, err := address.NewFromString(actorAddrString)
+					if err != nil {
+						return err
+					}
+
+					bs, tsk, err := getState(ctx)
+					if err != nil {
+						return err
+					}
+
+					return getBalance(ctx.Context, bs, tsk, actorAddr)
+				},
+			},
 		},
 	}
 

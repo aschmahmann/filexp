@@ -454,3 +454,35 @@ func getActors(ctx context.Context, bstore blockstore.Blockstore, tsk lchtypes.T
 	fmt.Printf("total block sizes: %d\n", totalSizeBytes)
 	return nil
 }
+
+func getBalance(ctx context.Context, bstore blockstore.Blockstore, tsk lchtypes.TipSetKey, addr filaddr.Address) error {
+	cbs := &countingBlockstore{Blockstore: bstore, m: make(map[cid.Cid]int)}
+	ebs := NewEphemeralBlockstore(cbs)
+	sm, err := newFilStateReader(ebs)
+	if err != nil {
+		return xerrors.Errorf("unable to initialize a StateManager: %w", err)
+	}
+
+	ts, err := sm.ChainStore().GetTipSetFromKey(ctx, tsk)
+	if err != nil {
+		return xerrors.Errorf("unable to load target tipset: %w", err)
+	}
+
+	stateTree, err := sm.StateTree(ts.ParentState())
+	if err != nil {
+		return err
+	}
+	act, err := stateTree.GetActor(addr)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("total actor balance: %s\n", act.Balance)
+	fmt.Printf("total blocks read: %d\n", len(cbs.m))
+	totalSizeBytes := 0
+	for _, v := range cbs.m {
+		totalSizeBytes += v
+	}
+	fmt.Printf("total block sizes: %d\n", totalSizeBytes)
+	return nil
+}
