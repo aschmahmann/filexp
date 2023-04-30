@@ -32,8 +32,6 @@ import (
 	blockstore "github.com/ipfs/go-ipfs-blockstore"
 	ipldcbor "github.com/ipfs/go-ipld-cbor"
 
-	"github.com/ribasushi/fil-fip36-vote-tally/ephemeralbs"
-
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/xerrors"
 )
@@ -192,7 +190,7 @@ var _ blockstore.Blockstore = (*bservBstoreWrapper)(nil)
 
 func getCoins(ctx context.Context, bstore blockstore.Blockstore, tsk lchtypes.TipSetKey, addr filaddr.Address) (defErr error) {
 	cbs := &countingBlockstore{Blockstore: bstore, m: make(map[cid.Cid]int)}
-	ebs := ephemeralbs.NewEphemeralBlockstore(cbs)
+	ebs := NewEphemeralBlockstore(cbs)
 	sm, err := newFilStateReader(ebs)
 	if err != nil {
 		return xerrors.Errorf("unable to initialize a StateManager: %w", err)
@@ -372,7 +370,7 @@ func parseActors(ctx context.Context, sm *lchstmgr.StateManager, ts *lchtypes.Ti
 
 func getActors(ctx context.Context, bstore blockstore.Blockstore, tsk lchtypes.TipSetKey, countOnly bool) error {
 	cbs := &countingBlockstore{Blockstore: bstore, m: make(map[cid.Cid]int)}
-	ebs := ephemeralbs.NewEphemeralBlockstore(cbs)
+	ebs := NewEphemeralBlockstore(cbs)
 	sm, err := newFilStateReader(ebs)
 	if err != nil {
 		return xerrors.Errorf("unable to initialize a StateManager: %w", err)

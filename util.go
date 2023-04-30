@@ -45,6 +45,8 @@ func newFilStateReader(bs lotusbs.Blockstore) (*stmgr.StateManager, error) {
 		nil,
 		nil,
 		nil,
+		nil,
+		nil,
 	)
 }
 
