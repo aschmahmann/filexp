@@ -4,10 +4,15 @@ import (
 	"context"
 	"github.com/filecoin-project/go-address"
 	lotusbs "github.com/filecoin-project/lotus/blockstore"
+	"github.com/filecoin-project/lotus/chain/consensus"
+	"github.com/filecoin-project/lotus/chain/consensus/filcns"
 	"github.com/filecoin-project/lotus/chain/stmgr"
 	chainstore "github.com/filecoin-project/lotus/chain/store"
+	"github.com/filecoin-project/lotus/chain/vm"
+	"github.com/filecoin-project/lotus/cmd/lotus-sim/simulation/mock"
 	"github.com/ipfs/go-cid"
 	ds "github.com/ipfs/go-datastore"
+	"github.com/ipfs/go-datastore/sync"
 	"github.com/ipld/go-car/v2"
 	carbs "github.com/ipld/go-car/v2/blockstore"
 	caridx "github.com/ipld/go-car/v2/index"
@@ -33,19 +38,28 @@ func mustAddrID(a address.Address) uint64 {
 }
 
 func newFilStateReader(bs lotusbs.Blockstore) (*stmgr.StateManager, error) {
+	mds := sync.MutexWrap(ds.NewMapDatastore())
+	c := cid.MustParse("bafy2bzacecnamqgqmifpluoeldx7zzglxcljo6oja4vrmtj7432rphldpdmm2")
+	err := mds.Put(context.TODO(), ds.NewKey("0"), c.Bytes())
+	if err != nil {
+		return nil, err
+	}
+
+	cs := chainstore.NewChainStore(
+		bs,
+		bs,
+		mds,
+		nil,
+		nil,
+	)
+
 	return stmgr.NewStateManager(
-		chainstore.NewChainStore(
-			bs,
-			bs,
-			ds.NewMapDatastore(),
-			nil,
-			nil,
-		),
+		cs,
+		consensus.NewTipSetExecutor(filcns.RewardFunc),
+		vm.Syscalls(mock.Verifier),
+		filcns.DefaultUpgradeSchedule(),
 		nil,
-		nil,
-		nil,
-		nil,
-		nil,
+		mds,
 		nil,
 	)
 }

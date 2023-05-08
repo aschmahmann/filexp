@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/filecoin-project/lotus/chain/types/ethtypes"
+	"golang.org/x/xerrors"
 	"log"
 	"os"
 	"time"
@@ -95,6 +97,30 @@ func main() {
 					}
 
 					return getBalance(ctx.Context, bs, tsk, actorAddr)
+				},
+			},
+			{
+				Name:        "fevm-exec",
+				Description: "Execute a read-only FVM actor. Either pass a state CAR, tipset CIDs, or trust chain.love for a recent time",
+				Usage:       "<eth-addr> <eth-data>",
+				Flags:       append([]cli.Flag{}, stateFlags...),
+				Action: func(ctx *cli.Context) error {
+					args := ctx.Args()
+					eaddr, err := ethtypes.ParseEthAddress(args.Get(0))
+					if err != nil {
+						return xerrors.Errorf("unable to parse eth address: %w", err)
+					}
+					decodedBytes, err := ethtypes.DecodeHexString(args.Get(1))
+					if err != nil {
+						return xerrors.Errorf("could not decode hex bytes: %w", err)
+					}
+
+					bs, tsk, err := getState(ctx)
+					if err != nil {
+						return err
+					}
+
+					return fevmExec(ctx.Context, bs, tsk, &eaddr, decodedBytes)
 				},
 			},
 		},
