@@ -13,6 +13,7 @@ import (
 	exchange "github.com/ipfs/go-ipfs-exchange-interface"
 	ipld "github.com/ipfs/go-ipld-format"
 	"github.com/ipfs/go-verifcid"
+	carbs "github.com/ipld/go-car/v2/blockstore"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -43,8 +44,9 @@ import (
 
 type countingBlockstore struct {
 	blockstore.Blockstore
-	mx sync.Mutex
-	m  map[cid.Cid]int
+	mx          sync.Mutex
+	m           map[cid.Cid]int
+	orderedCids []cid.Cid
 }
 
 func (c *countingBlockstore) Get(ctx context.Context, cid cid.Cid) (blocks.Block, error) {
@@ -54,7 +56,11 @@ func (c *countingBlockstore) Get(ctx context.Context, cid cid.Cid) (blocks.Block
 	}
 
 	c.mx.Lock()
+	_, found := c.m[cid]
 	c.m[cid] = len(blk.RawData())
+	if !found {
+		c.orderedCids = append(c.orderedCids, cid)
+	}
 	c.mx.Unlock()
 
 	return blk, nil
@@ -504,6 +510,7 @@ func fevmExec(ctx context.Context, bstore blockstore.Blockstore, tsk lchtypes.Ti
 	if err != nil {
 		return xerrors.Errorf("unable to load target tipset: %w", err)
 	}
+	fmt.Printf("epoch %s\n", ts.Height())
 
 	tx := ethtypes.EthCall{
 		From:     nil,
@@ -517,6 +524,28 @@ func fevmExec(ctx context.Context, bstore blockstore.Blockstore, tsk lchtypes.Ti
 	if err != nil {
 		return xerrors.Errorf("unable to convert ethcall to filecoin message: %w", err)
 	}
+
+	act, err := sm.LoadActor(ctx, filMsg.To, ts)
+	if err != nil {
+		return xerrors.Errorf("could not load actor the message is from: %w", err)
+	}
+	actorStateRoot := act.Head
+	fmt.Printf("actor state root: %s\n", actorStateRoot)
+
+	_, err = ebs.Get(ctx, actorStateRoot)
+	if err != nil {
+		return fmt.Errorf("error loading state root %w", err)
+	}
+	fmt.Printf("total blocks read: %d\n", len(cbs.m))
+	totalSizeBytes := 0
+	for _, v := range cbs.m {
+		totalSizeBytes += v
+	}
+	fmt.Printf("total block sizes: %d\n", totalSizeBytes)
+	for _, c := range cbs.orderedCids {
+		fmt.Printf("pre-call cid: %s\n", c)
+	}
+
 	res, err := sm.Call(ctx, filMsg, ts)
 	if err != nil {
 		return xerrors.Errorf("unable to make a call: %w", err)
@@ -531,11 +560,38 @@ func fevmExec(ctx context.Context, bstore blockstore.Blockstore, tsk lchtypes.Ti
 	fmt.Println(string(str))
 
 	fmt.Printf("total blocks read: %d\n", len(cbs.m))
-	totalSizeBytes := 0
+	totalSizeBytes = 0
 	for _, v := range cbs.m {
 		totalSizeBytes += v
 	}
 	fmt.Printf("total block sizes: %d\n", totalSizeBytes)
+
+	cidsInOrder := cbs.orderedCids
+	if err != nil {
+		return err
+	}
+	carw, err := carbs.OpenReadWrite("out.car", []cid.Cid{actorStateRoot}, carbs.WriteAsCarV1(true))
+	if err != nil {
+		return err
+	}
+
+	for _, c := range cidsInOrder {
+		fmt.Printf("all cid: %s\n", c)
+	}
+
+	for _, c := range cidsInOrder {
+		blk, err := bstore.Get(ctx, c)
+		if err != nil {
+			return err
+		}
+		if err := carw.Put(ctx, blk); err != nil {
+			return err
+		}
+	}
+	if err := carw.Finalize(); err != nil {
+		return err
+	}
+
 	return nil
 }
 
