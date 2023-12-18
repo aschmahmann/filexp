@@ -249,4 +249,6 @@ require (
 
 replace github.com/filecoin-project/go-hamt-ipld/v3 => github.com/aschmahmann/go-hamt-ipld/v3 v3.0.0-20230117061543-a9b3d6bfd710
 
-replace github.com/filecoin-project/filecoin-ffi => ./extern/filecoin-ffi
+replace github.com/filecoin-project/filecoin-ffi => github.com/filecoin-project/ffi-stub v0.4.2-0.20230814133743-abfbe41aa7ab
+
+//replace github.com/filecoin-project/filecoin-ffi => ./extern/filecoin-ffi

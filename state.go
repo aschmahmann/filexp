@@ -499,7 +499,7 @@ func getBalance(ctx context.Context, bstore blockstore.Blockstore, tsk lchtypes.
 	return nil
 }
 
-func fevmExec(ctx context.Context, bstore blockstore.Blockstore, tsk lchtypes.TipSetKey, eaddr *ethtypes.EthAddress, edata ethtypes.EthBytes) error {
+func fevmExec(ctx context.Context, bstore blockstore.Blockstore, tsk lchtypes.TipSetKey, eaddr *ethtypes.EthAddress, edata ethtypes.EthBytes, outputCAR string) error {
 	cbs := &countingBlockstore{Blockstore: bstore, m: make(map[cid.Cid]int)}
 	ebs := NewEphemeralBlockstore(cbs)
 	ts, sm, filMsg, err := getFevmRequest(ctx, ebs, tsk, eaddr, edata)
@@ -554,27 +554,30 @@ func fevmExec(ctx context.Context, bstore blockstore.Blockstore, tsk lchtypes.Ti
 	if err != nil {
 		return err
 	}
-	carw, err := carbs.OpenReadWrite("out.car", []cid.Cid{actorStateRoot}, carbs.WriteAsCarV1(true))
-	if err != nil {
-		return err
-	}
 
 	for _, c := range cidsInOrder {
 		fmt.Printf("all cid: %s\n", c)
 	}
 
-	for _, c := range cidsInOrder {
-		blk, err := bstore.Get(ctx, c)
+	if outputCAR != "" {
+		carw, err := carbs.OpenReadWrite(outputCAR, []cid.Cid{actorStateRoot}, carbs.WriteAsCarV1(true))
 		if err != nil {
 			return err
 		}
-		if err := carw.Put(ctx, blk); err != nil {
+
+		for _, c := range cidsInOrder {
+			blk, err := bstore.Get(ctx, c)
+			if err != nil {
+				return err
+			}
+			if err := carw.Put(ctx, blk); err != nil {
+				return err
+			}
+		}
+
+		if err := carw.Finalize(); err != nil {
 			return err
 		}
-	}
-
-	if err := carw.Finalize(); err != nil {
-		return err
 	}
 
 	return nil
