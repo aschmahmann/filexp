@@ -3,11 +3,18 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"github.com/filecoin-project/go-state-types/big"
+	lotusbs "github.com/filecoin-project/lotus/blockstore"
+	"github.com/filecoin-project/lotus/build"
+	"github.com/filecoin-project/lotus/chain/actors"
+	"github.com/filecoin-project/lotus/chain/types/ethtypes"
 	leveldb "github.com/ipfs/go-ds-leveldb"
 	exchange "github.com/ipfs/go-ipfs-exchange-interface"
 	ipld "github.com/ipfs/go-ipld-format"
 	"github.com/ipfs/go-verifcid"
+	carbs "github.com/ipld/go-car/v2/blockstore"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -38,8 +45,9 @@ import (
 
 type countingBlockstore struct {
 	blockstore.Blockstore
-	mx sync.Mutex
-	m  map[cid.Cid]int
+	mx          sync.Mutex
+	m           map[cid.Cid]int
+	orderedCids []cid.Cid
 }
 
 func (c *countingBlockstore) Get(ctx context.Context, cid cid.Cid) (blocks.Block, error) {
@@ -49,7 +57,11 @@ func (c *countingBlockstore) Get(ctx context.Context, cid cid.Cid) (blocks.Block
 	}
 
 	c.mx.Lock()
+	_, found := c.m[cid]
 	c.m[cid] = len(blk.RawData())
+	if !found {
+		c.orderedCids = append(c.orderedCids, cid)
+	}
 	c.mx.Unlock()
 
 	return blk, nil
@@ -80,7 +92,7 @@ func getStateFromCar(ctx context.Context, srcSnapshot string) (blockstore.Blocks
 	return carbs, tsk, nil
 }
 
-func getStateDynamicallyLoadedFromBitswap(ctx context.Context, tsk lchtypes.TipSetKey) (blockstore.Blockstore, lchtypes.TipSetKey, error) {
+func getStateDynamicallyLoadedFromBitswap(ctx context.Context) (blockstore.Blockstore, error) {
 	start := time.Now()
 	defer func() {
 		fmt.Printf("duration: %v\n", time.Since(start))
@@ -88,7 +100,7 @@ func getStateDynamicallyLoadedFromBitswap(ctx context.Context, tsk lchtypes.TipS
 
 	h, bsc, err := setupContentFetching(ctx)
 	if err != nil {
-		return nil, lchtypes.EmptyTSK, err
+		return nil, err
 	}
 	_ = h
 
@@ -117,14 +129,14 @@ func getStateDynamicallyLoadedFromBitswap(ctx context.Context, tsk lchtypes.TipS
 
 	lds, err := leveldb.NewDatastore("", nil)
 	if err != nil {
-		return nil, lchtypes.EmptyTSK, err
+		return nil, err
 	}
 	baseBstore := blockstore.NewBlockstore(lds)
 	bs := blockstore.NewIdStore(&bservBstoreWrapper{Blockstore: baseBstore, bserv: bsc.NewSession(ctx)})
 
 	fmt.Printf("duration to setup bitswap fetching: %v\n", time.Since(start))
 
-	return bs, tsk, nil
+	return bs, nil
 }
 
 // this is the wrong way around, but this is the easiest way to hack it
@@ -485,4 +497,173 @@ func getBalance(ctx context.Context, bstore blockstore.Blockstore, tsk lchtypes.
 	}
 	fmt.Printf("total block sizes: %d\n", totalSizeBytes)
 	return nil
+}
+
+func fevmExec(ctx context.Context, bstore blockstore.Blockstore, tsk lchtypes.TipSetKey, eaddr *ethtypes.EthAddress, edata ethtypes.EthBytes, outputCAR string) error {
+	cbs := &countingBlockstore{Blockstore: bstore, m: make(map[cid.Cid]int)}
+	ebs := NewEphemeralBlockstore(cbs)
+	ts, sm, filMsg, err := getFevmRequest(ctx, ebs, tsk, eaddr, edata)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("epoch %s\n", ts.Height())
+
+	act, err := sm.LoadActor(ctx, filMsg.To, ts)
+	if err != nil {
+		return xerrors.Errorf("could not load actor the message is from: %w", err)
+	}
+	actorStateRoot := act.Head
+	fmt.Printf("actor state root: %s\n", actorStateRoot)
+
+	_, err = ebs.Get(ctx, actorStateRoot)
+	if err != nil {
+		return fmt.Errorf("error loading state root %w", err)
+	}
+
+	fmt.Printf("total blocks read: %d\n", len(cbs.m))
+	totalSizeBytes := 0
+	for _, v := range cbs.m {
+		totalSizeBytes += v
+	}
+	fmt.Printf("total block sizes: %d\n", totalSizeBytes)
+	for _, c := range cbs.orderedCids {
+		fmt.Printf("pre-call cid: %s\n", c)
+	}
+
+	res, err := sm.Call(ctx, filMsg, ts)
+	if err != nil {
+		return xerrors.Errorf("unable to make a call: %w", err)
+	}
+
+	str, err := json.Marshal(res)
+	if err != nil {
+		fmt.Println(res)
+		return xerrors.Errorf("could not marshal response as json: %w", err)
+	}
+
+	fmt.Println(string(str))
+
+	fmt.Printf("total blocks read: %d\n", len(cbs.m))
+	totalSizeBytes = 0
+	for _, v := range cbs.m {
+		totalSizeBytes += v
+	}
+	fmt.Printf("total block sizes: %d\n", totalSizeBytes)
+
+	cidsInOrder := cbs.orderedCids
+	if err != nil {
+		return err
+	}
+
+	for _, c := range cidsInOrder {
+		fmt.Printf("all cid: %s\n", c)
+	}
+
+	if outputCAR != "" {
+		carw, err := carbs.OpenReadWrite(outputCAR, []cid.Cid{actorStateRoot}, carbs.WriteAsCarV1(true))
+		if err != nil {
+			return err
+		}
+
+		for _, c := range cidsInOrder {
+			blk, err := bstore.Get(ctx, c)
+			if err != nil {
+				return err
+			}
+			if err := carw.Put(ctx, blk); err != nil {
+				return err
+			}
+		}
+
+		if err := carw.Finalize(); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func getFevmRequest(ctx context.Context, ebs lotusbs.Blockstore, tsk lchtypes.TipSetKey, eaddr *ethtypes.EthAddress, edata ethtypes.EthBytes) (*lchtypes.TipSet, *lchstmgr.StateManager, *lchtypes.Message, error) {
+	sm, err := newFilStateReader(ebs)
+	if err != nil {
+		return nil, nil, nil, xerrors.Errorf("unable to initialize a StateManager: %w", err)
+	}
+
+	ts, err := sm.ChainStore().GetTipSetFromKey(ctx, tsk)
+	if err != nil {
+		return nil, nil, nil, xerrors.Errorf("unable to load target tipset: %w", err)
+	}
+
+	tx := ethtypes.EthCall{
+		From:     nil,
+		To:       eaddr,
+		Gas:      0,
+		GasPrice: ethtypes.EthBigInt{},
+		Value:    ethtypes.EthBigInt{},
+		Data:     edata,
+	}
+	filMsg, err := ethCallToFilecoinMessage(ctx, tx)
+	if err != nil {
+		return nil, nil, nil, xerrors.Errorf("unable to convert ethcall to filecoin message: %w", err)
+	}
+
+	return ts, sm, filMsg, nil
+}
+
+func ethCallToFilecoinMessage(ctx context.Context, tx ethtypes.EthCall) (*lchtypes.Message, error) {
+	var from filaddr.Address
+	if tx.From == nil || *tx.From == (ethtypes.EthAddress{}) {
+		// Send from the filecoin "system" address.
+		var err error
+		from, err = (ethtypes.EthAddress{}).ToFilecoinAddress()
+		if err != nil {
+			return nil, fmt.Errorf("failed to construct the ethereum system address: %w", err)
+		}
+	} else {
+		// The from address must be translatable to an f4 address.
+		var err error
+		from, err = tx.From.ToFilecoinAddress()
+		if err != nil {
+			return nil, fmt.Errorf("failed to translate sender address (%s): %w", tx.From.String(), err)
+		}
+		if p := from.Protocol(); p != filaddr.Delegated {
+			return nil, fmt.Errorf("expected a class 4 address, got: %d: %w", p, err)
+		}
+	}
+
+	var params []byte
+	if len(tx.Data) > 0 {
+		initcode := abi.CborBytes(tx.Data)
+		params2, err := actors.SerializeParams(&initcode)
+		if err != nil {
+			return nil, fmt.Errorf("failed to serialize params: %w", err)
+		}
+		params = params2
+	}
+
+	var to filaddr.Address
+	var method abi.MethodNum
+	if tx.To == nil {
+		// this is a contract creation
+		to = builtin.EthereumAddressManagerActorAddr
+		method = builtin.MethodsEAM.CreateExternal
+	} else {
+		addr, err := tx.To.ToFilecoinAddress()
+		if err != nil {
+			return nil, xerrors.Errorf("cannot get Filecoin address: %w", err)
+		}
+		to = addr
+		method = builtin.MethodsEVM.InvokeContract
+	}
+
+	return &lchtypes.Message{
+		From:       from,
+		To:         to,
+		Value:      big.Int(tx.Value),
+		Method:     method,
+		Params:     params,
+		GasLimit:   build.BlockGasLimit,
+		GasFeeCap:  big.Zero(),
+		GasPremium: big.Zero(),
+	}, nil
 }

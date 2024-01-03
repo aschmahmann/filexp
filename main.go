@@ -14,7 +14,6 @@ import (
 	"github.com/filecoin-project/lotus/chain/types"
 	"github.com/ipfs/go-cid"
 	bstore "github.com/ipfs/go-ipfs-blockstore"
-
 	"github.com/urfave/cli/v2"
 )
 
@@ -97,6 +96,24 @@ func main() {
 					return getBalance(ctx.Context, bs, tsk, actorAddr)
 				},
 			},
+			{
+				Name:        "fevm-exec",
+				Description: "Execute a read-only FVM actor. Either pass a state CAR, tipset CIDs, or trust chain.love for a recent time",
+				Usage:       "<eth-addr> <eth-data>",
+				Flags: append(append([]cli.Flag{}, stateFlags...),
+					&cli.PathFlag{
+						Name:  "output",
+						Usage: "The path for an output CAR containing the data loaded while computing the result (is not output if undefined)",
+					}),
+				Action: cmdFevmExec,
+			},
+			{
+				Name:        "fevm-daemon",
+				Description: "Start a daemon that will respond to Ethereum JSON RPC calls. Either pass a state CAR, tipset CIDs, or trust chain.love for a recent time",
+				Usage:       "[port]",
+				Flags:       append([]cli.Flag{}, stateFlags...),
+				Action:      cmdFevmDaemon,
+			},
 		},
 	}
 
@@ -142,22 +159,36 @@ func getState(ctx *cli.Context) (bstore.Blockstore, types.TipSetKey, error) {
 	}
 
 	if clSet {
-		addr := "api.chain.love"
-		var api lotusapi.FullNodeStruct
-		closer, err := jsonrpc.NewMergeClient(context.Background(), "ws://"+addr+"/rpc/v0", "Filecoin", []interface{}{&api.Internal, &api.CommonStruct.Internal}, nil)
+		var height int64
+		var err error
+		height, tsk, err = getStableChainloveTSK(ctx.Context)
 		if err != nil {
-			log.Fatalf("connecting with lotus API failed: %s", err)
+			log.Fatalf(err.Error())
 		}
-		defer closer()
-
-		chainHeightTwoHoursAgo := (time.Now().Add(-2*time.Hour).Unix() - 1598306400) / 30
-		tipset, err := api.ChainGetTipSetByHeight(ctx.Context, abi.ChainEpoch(chainHeightTwoHoursAgo), types.TipSetKey{})
-		if err != nil {
-			log.Fatalf("could not get chain tipset from height %d: %s", chainHeightTwoHoursAgo, err)
-		}
-		fmt.Printf("using chainheight %d, with reported tipset %s\n", chainHeightTwoHoursAgo, tipset)
-		tsk = tipset.Key()
+		fmt.Printf("using chainheight %d, with reported tipset %s\n", height, tsk)
 	}
 
-	return getStateDynamicallyLoadedFromBitswap(ctx.Context, tsk)
+	bs, err := getStateDynamicallyLoadedFromBitswap(ctx.Context)
+	if err != nil {
+		return nil, types.EmptyTSK, err
+	}
+
+	return bs, tsk, err
+}
+
+func getStableChainloveTSK(ctx context.Context) (int64, types.TipSetKey, error) {
+	addr := "api.chain.love"
+	var api lotusapi.FullNodeStruct
+	closer, err := jsonrpc.NewMergeClient(ctx, "ws://"+addr+"/rpc/v0", "Filecoin", []interface{}{&api.Internal, &api.CommonStruct.Internal}, nil)
+	if err != nil {
+		return 0, types.EmptyTSK, fmt.Errorf("connecting with lotus API failed: %w", err)
+	}
+	defer closer()
+
+	chainHeightTwoHoursAgo := (time.Now().Add(-2*time.Hour).Unix() - 1598306400) / 30
+	tipset, err := api.ChainGetTipSetByHeight(ctx, abi.ChainEpoch(chainHeightTwoHoursAgo), types.TipSetKey{})
+	if err != nil {
+		return 0, types.EmptyTSK, fmt.Errorf("could not get chain tipset from height %d: %w", chainHeightTwoHoursAgo, err)
+	}
+	return chainHeightTwoHoursAgo, tipset.Key(), nil
 }

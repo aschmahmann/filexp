@@ -10,8 +10,12 @@ Install Go and run:
 ```
 git clone https://github.com/aschmahmann/filexp
 cd filexp
+git submodule update --init
+make -C extern/filecoin-ffi
 go install
 ```
+
+Note: Currently does not work on Windows
 
 ## Running
 
