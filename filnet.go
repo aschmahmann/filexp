@@ -12,11 +12,9 @@ import (
 	blockstore "github.com/ipfs/go-ipfs-blockstore"
 	nilrouting "github.com/ipfs/go-ipfs-routing/none"
 	"github.com/ipfs/go-ipns"
-	"github.com/libp2p/go-libp2p"
 	dht "github.com/libp2p/go-libp2p-kad-dht"
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
 	"github.com/libp2p/go-libp2p/core/host"
-	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 )
 
@@ -29,15 +27,10 @@ var boostrappers = []string{
 	"/dns4/bootstrap-mainnet-2.chainsafe-fil.io/tcp/34000/p2p/12D3KooWHQRSDFv4FvAjtU32shQ7znz7oRbLBryXzZ9NMK2feyyH",
 }
 
-func setupContentFetching(ctx context.Context) (host.Host, *bsclient.Client, error) {
-	h, err := libp2p.New(libp2p.ResourceManager(&network.NullResourceManager{}))
-	if err != nil {
-		return nil, nil, err
-	}
-
+func setupFilContentFetching(h host.Host, ctx context.Context) (*bsclient.Client, error) {
 	nr, err := nilrouting.ConstructNilRouting(ctx, nil, nil, nil)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	nullBS := blockstore.NewBlockstore(datastore.NewNullDatastore())
 	n := bsnet.NewFromIpfsHost(h, nr, bsnet.Prefix("/chain"))
@@ -46,10 +39,10 @@ func setupContentFetching(ctx context.Context) (host.Host, *bsclient.Client, err
 
 	// setup pubsub for peer discovery so we can do Bitswap
 	if err := setupPubSub(ctx, h); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
-	return h, bs, nil
+	return bs, nil
 }
 
 type hasHost interface {

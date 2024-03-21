@@ -4,13 +4,17 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/hashicorp/go-multierror"
 	leveldb "github.com/ipfs/go-ds-leveldb"
 	exchange "github.com/ipfs/go-ipfs-exchange-interface"
 	ipld "github.com/ipfs/go-ipld-format"
 	"github.com/ipfs/go-verifcid"
-	"sync"
-	"sync/atomic"
-	"time"
+	"github.com/libp2p/go-libp2p"
+	"github.com/libp2p/go-libp2p/core/network"
 
 	filaddr "github.com/filecoin-project/go-address"
 	"github.com/filecoin-project/go-state-types/abi"
@@ -86,11 +90,31 @@ func getStateDynamicallyLoadedFromBitswap(ctx context.Context, tsk lchtypes.TipS
 		fmt.Printf("duration: %v\n", time.Since(start))
 	}()
 
-	h, bsc, err := setupContentFetching(ctx)
+	h, err := libp2p.New(libp2p.ResourceManager(&network.NullResourceManager{}))
 	if err != nil {
 		return nil, lchtypes.EmptyTSK, err
 	}
-	_ = h
+
+	bscFil, err := setupFilContentFetching(h, ctx)
+	if err != nil {
+		return nil, lchtypes.EmptyTSK, err
+	}
+	bscIpfs, err := setupIPFSContentFetching(h, ctx)
+	if err != nil {
+		return nil, lchtypes.EmptyTSK, err
+	}
+
+	lds, err := leveldb.NewDatastore("", nil)
+	if err != nil {
+		return nil, lchtypes.EmptyTSK, err
+	}
+	baseBstore := blockstore.NewBlockstore(lds)
+	cf := &combineFetcher{
+		0, 0,
+		bscFil.NewSession(ctx),
+		bscIpfs.NewSession(ctx),
+	}
+	bs := blockstore.NewIdStore(&bservBstoreWrapper{Blockstore: baseBstore, bserv: cf})
 
 	go func() {
 		ticker := time.NewTicker(10 * time.Second)
@@ -101,31 +125,89 @@ func getStateDynamicallyLoadedFromBitswap(ctx context.Context, tsk lchtypes.TipS
 				return
 			case <-ticker.C:
 				peers := h.Network().Peers()
-				nPeersWithBitswap := 0
+				nPeersWithFilBitswap := 0
+				nPeersWithIpfsBitswap := 0
 				for _, p := range peers {
-					retProto, err := h.Peerstore().FirstSupportedProtocol(p, "/chain/ipfs/bitswap/1.2.0")
+					const ipfsBs = "/ipfs/bitswap/1.2.0"
+					const filBs = "/chain" + ipfsBs
+					retProto, err := h.Peerstore().FirstSupportedProtocol(p, filBs, ipfsBs)
 					if err != nil || retProto == "" {
 						continue
 					}
-					nPeersWithBitswap++
+
+					//TODO: This isn't technically correct since peers can support both, but in practice none do
+					switch retProto {
+					case filBs:
+						nPeersWithFilBitswap++
+					case ipfsBs:
+						nPeersWithIpfsBitswap++
+					}
 				}
-				nwants := len(bsc.GetWantlist())
-				fmt.Printf("numPeers: %d, nPeersWithBitswap: %d numWants: %d \n", len(peers), nPeersWithBitswap, nwants)
+				nwantsFil := len(bscFil.GetWantlist())
+				nwantsIpfs := len(bscIpfs.GetWantlist())
+				nFilBlks := atomic.LoadUint64(&cf.numFirstBlocks)
+				nIpfsBlks := atomic.LoadUint64(&cf.numSecondBlocks)
+				fmt.Printf("numPeers: %d, "+
+					"nPeersWithFilBitswap: %d, numWantsFil: %d, nblksFil: %d, "+
+					"nPeersWithIpfsBitswap: %d, numWantsIpfs: %d, nblksIpfs: %d \n",
+					len(peers), nPeersWithFilBitswap, nwantsFil, nFilBlks, nPeersWithIpfsBitswap, nwantsIpfs, nIpfsBlks)
 			}
 		}
 	}()
-
-	lds, err := leveldb.NewDatastore("", nil)
-	if err != nil {
-		return nil, lchtypes.EmptyTSK, err
-	}
-	baseBstore := blockstore.NewBlockstore(lds)
-	bs := blockstore.NewIdStore(&bservBstoreWrapper{Blockstore: baseBstore, bserv: bsc.NewSession(ctx)})
 
 	fmt.Printf("duration to setup bitswap fetching: %v\n", time.Since(start))
 
 	return bs, tsk, nil
 }
+
+type combineFetcher struct {
+	numFirstBlocks, numSecondBlocks uint64
+	first, second                   exchange.Fetcher
+}
+
+func (f *combineFetcher) GetBlock(ctx context.Context, c cid.Cid) (blocks.Block, error) {
+	subCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	firstCh, firstErr := f.first.GetBlocks(subCtx, []cid.Cid{c})
+	secondCh, secondErr := f.second.GetBlocks(subCtx, []cid.Cid{c})
+	if firstErr != nil && secondErr != nil {
+		return nil, multierror.Append(firstErr, secondErr)
+	}
+	if firstErr != nil {
+		blk := <-secondCh
+		atomic.AddUint64(&f.numSecondBlocks, 1)
+		return blk, nil
+	}
+	if secondErr != nil {
+		blk := <-firstCh
+		atomic.AddUint64(&f.numFirstBlocks, 1)
+		return blk, nil
+	}
+
+	var blk blocks.Block
+	select {
+	case blk = <-firstCh:
+		atomic.AddUint64(&f.numFirstBlocks, 1)
+	case blk = <-secondCh:
+		atomic.AddUint64(&f.numSecondBlocks, 1)
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	if blk == nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return nil, fmt.Errorf("block missing... this shouldn't happen. Report an error")
+	}
+	return blk, nil
+}
+
+func (f *combineFetcher) GetBlocks(ctx context.Context, cids []cid.Cid) (<-chan blocks.Block, error) {
+	//TODO implement me
+	panic("implement me")
+}
+
+var _ exchange.Fetcher = (*combineFetcher)(nil)
 
 // this is the wrong way around, but this is the easiest way to hack it
 type bservBstoreWrapper struct {
