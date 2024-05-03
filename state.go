@@ -5,6 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/hashicorp/go-multierror"
 	"github.com/filecoin-project/go-state-types/big"
 	lotusbs "github.com/filecoin-project/lotus/blockstore"
 	"github.com/filecoin-project/lotus/build"
@@ -18,9 +23,6 @@ import (
 	carbs "github.com/ipld/go-car/v2/blockstore"
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/network"
-	"sync"
-	"sync/atomic"
-	"time"
 
 	filaddr "github.com/filecoin-project/go-address"
 	"github.com/filecoin-project/go-state-types/abi"
