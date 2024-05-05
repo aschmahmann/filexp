@@ -9,23 +9,25 @@ import (
 	"time"
 
 	filaddr "github.com/filecoin-project/go-address"
-	"github.com/filecoin-project/go-hamt-ipld/v3"
-	"github.com/filecoin-project/go-state-types/abi"
+	hamt "github.com/filecoin-project/go-hamt-ipld/v3"
+	filabi "github.com/filecoin-project/go-state-types/abi"
 	filbig "github.com/filecoin-project/go-state-types/big"
-	"github.com/filecoin-project/go-state-types/builtin"
-	"github.com/filecoin-project/go-state-types/builtin/v10/util/adt"
-	lchadt "github.com/filecoin-project/lotus/chain/actors/adt"
+	filbuiltin "github.com/filecoin-project/go-state-types/builtin"
+	filadt "github.com/filecoin-project/go-state-types/builtin/v13/util/adt"
+	filstore "github.com/filecoin-project/go-state-types/store"
 	lbi "github.com/filecoin-project/lotus/chain/actors/builtin"
 	lbimsig "github.com/filecoin-project/lotus/chain/actors/builtin/multisig"
 	lchstmgr "github.com/filecoin-project/lotus/chain/stmgr"
 	lchtypes "github.com/filecoin-project/lotus/chain/types"
+	"github.com/ipfs/boxo/blockstore"
 	"github.com/ipfs/go-cid"
-	blockstore "github.com/ipfs/go-ipfs-blockstore"
 	ipldcbor "github.com/ipfs/go-ipld-cbor"
 	cbg "github.com/whyrusleeping/cbor-gen"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/xerrors"
 )
+
+var hamtOptions = append(filadt.DefaultHamtOptions, hamt.UseTreeBitWidth(filbuiltin.DefaultHamtBitwidth))
 
 func getCoins(ctx context.Context, bstore blockstore.Blockstore, tsk lchtypes.TipSetKey, addr filaddr.Address) (defErr error) {
 	cbs := &countingBlockstore{Blockstore: bstore, m: make(map[cid.Cid]int)}
@@ -42,7 +44,7 @@ func getCoins(ctx context.Context, bstore blockstore.Blockstore, tsk lchtypes.Ti
 
 	eg, shCtx := errgroup.WithContext(ctx)
 
-	foundAttoFil := abi.NewTokenAmount(0)
+	foundAttoFil := filabi.NewTokenAmount(0)
 
 	go func() {
 		ticker := time.NewTicker(10 * time.Second)
@@ -76,8 +78,8 @@ func getCoins(ctx context.Context, bstore blockstore.Blockstore, tsk lchtypes.Ti
 	return
 }
 
-func parseActors(ctx context.Context, sm *lchstmgr.StateManager, ts *lchtypes.TipSet, rootAddr filaddr.Address, foundAttoFil abi.TokenAmount) error {
-	ast := lchadt.WrapStore(ctx, ipldcbor.NewCborStore(sm.ChainStore().UnionStore()))
+func parseActors(ctx context.Context, sm *lchstmgr.StateManager, ts *lchtypes.TipSet, rootAddr filaddr.Address, foundAttoFil filabi.TokenAmount) error {
+	ast := filstore.WrapStore(ctx, ipldcbor.NewCborStore(sm.ChainStore().UnionStore()))
 	getManyAst := &getManyCborStore{
 		BasicIpldStore: ipldcbor.NewCborStore(sm.ChainStore().StateBlockstore())}
 
@@ -96,7 +98,6 @@ func parseActors(ctx context.Context, sm *lchstmgr.StateManager, ts *lchtypes.Ti
 		return err
 	}
 
-	hamtOptions := append(adt.DefaultHamtOptions, hamt.UseTreeBitWidth(builtin.DefaultHamtBitwidth))
 	node, err := hamt.LoadNode(ctx, getManyAst, root.Actors, hamtOptions...)
 	if err != nil {
 		return err
@@ -124,8 +125,6 @@ func parseActors(ctx context.Context, sm *lchstmgr.StateManager, ts *lchtypes.Ti
 			if err != nil {
 				return err
 			}
-			msID := mustAddrID(addr)
-			_ = msID
 			tr, _ := ms.Threshold()
 
 			actors, err := ms.Signers()
@@ -196,7 +195,7 @@ func getActors(ctx context.Context, bstore blockstore.Blockstore, tsk lchtypes.T
 	var numActors uint64
 
 	eg.Go(func() error {
-		ast := lchadt.WrapStore(ctx, ipldcbor.NewCborStore(sm.ChainStore().UnionStore()))
+		ast := filstore.WrapStore(ctx, ipldcbor.NewCborStore(sm.ChainStore().UnionStore()))
 		getManyAst := &getManyCborStore{
 			BasicIpldStore: ipldcbor.NewCborStore(sm.ChainStore().StateBlockstore())}
 
@@ -206,7 +205,6 @@ func getActors(ctx context.Context, bstore blockstore.Blockstore, tsk lchtypes.T
 			return err
 		}
 
-		hamtOptions := append(adt.DefaultHamtOptions, hamt.UseTreeBitWidth(builtin.DefaultHamtBitwidth))
 		node, err := hamt.LoadNode(ctx, getManyAst, root.Actors, hamtOptions...)
 		if err != nil {
 			return err

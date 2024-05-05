@@ -8,40 +8,23 @@ import (
 	"sync"
 	"time"
 
-	"github.com/filecoin-project/go-address"
 	lotusbs "github.com/filecoin-project/lotus/blockstore"
-	"github.com/filecoin-project/lotus/chain/stmgr"
-	chainstore "github.com/filecoin-project/lotus/chain/store"
+	lchstmgr "github.com/filecoin-project/lotus/chain/stmgr"
+	lchstore "github.com/filecoin-project/lotus/chain/store"
 	lchtypes "github.com/filecoin-project/lotus/chain/types"
-	blocks "github.com/ipfs/go-block-format"
+	"github.com/ipfs/boxo/blockstore"
+	blkfmt "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
 	ds "github.com/ipfs/go-datastore"
-	blockstore "github.com/ipfs/go-ipfs-blockstore"
 	"github.com/ipld/go-car/v2"
 	carbs "github.com/ipld/go-car/v2/blockstore"
 	caridx "github.com/ipld/go-car/v2/index"
 	"golang.org/x/xerrors"
 )
 
-func cidMustParse(s string) cid.Cid {
-	c, err := cid.Parse(s)
-	if err != nil {
-		panic(err)
-	}
-	return c
-}
-
-func mustAddrID(a address.Address) uint64 {
-	i, err := address.IDFromAddress(a)
-	if err != nil {
-		panic(err)
-	}
-	return i
-}
-
-func newFilStateReader(bs lotusbs.Blockstore) (*stmgr.StateManager, error) {
-	return stmgr.NewStateManager(
-		chainstore.NewChainStore(
+func newFilStateReader(bs lotusbs.Blockstore) (*lchstmgr.StateManager, error) {
+	return lchstmgr.NewStateManager(
+		lchstore.NewChainStore(
 			bs,
 			bs,
 			ds.NewMapDatastore(),
@@ -129,7 +112,7 @@ type countingBlockstore struct {
 	m  map[cid.Cid]int
 }
 
-func (c *countingBlockstore) Get(ctx context.Context, cid cid.Cid) (blocks.Block, error) {
+func (c *countingBlockstore) Get(ctx context.Context, cid cid.Cid) (blkfmt.Block, error) {
 	blk, err := c.Blockstore.Get(ctx, cid)
 	if err != nil {
 		return nil, err

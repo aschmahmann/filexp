@@ -4,11 +4,11 @@ import (
 	"context"
 
 	lotusbs "github.com/filecoin-project/lotus/blockstore"
+	ipfsbs "github.com/ipfs/boxo/blockstore"
 	blkfmt "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
 	ds "github.com/ipfs/go-datastore"
 	dssync "github.com/ipfs/go-datastore/sync"
-	ipfsbs "github.com/ipfs/go-ipfs-blockstore"
 	"golang.org/x/xerrors"
 )
 
