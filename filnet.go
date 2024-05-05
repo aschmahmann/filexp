@@ -153,13 +153,18 @@ func initBitswapGetter(ctx context.Context) (blockstore.Blockstore, error) {
 	if err != nil {
 		return nil, err
 	}
-	baseBstore := blockstore.NewBlockstore(lds)
 	cf := &combineFetcher{
 		0, 0,
 		bscFil.NewSession(ctx),
 		bscIpfs.NewSession(ctx),
 	}
-	bs := blockstore.NewIdStore(&bservBstoreWrapper{Blockstore: baseBstore, bserv: cf})
+	cbs := &countingBlockstore{
+		m: make(map[cid.Cid]int),
+		Blockstore: blockstore.NewIdStore(&bservBstoreWrapper{
+			Blockstore: blockstore.NewBlockstore(lds),
+			bserv:      cf,
+		}),
+	}
 
 	go func() {
 		ticker := time.NewTicker(10 * time.Second)
@@ -192,15 +197,20 @@ func initBitswapGetter(ctx context.Context) (blockstore.Blockstore, error) {
 				nwantsIpfs := len(bscIpfs.GetWantlist())
 				nFilBlks := atomic.LoadUint64(&cf.numFirstBlocks)
 				nIpfsBlks := atomic.LoadUint64(&cf.numSecondBlocks)
+				cbs.mx.Lock()
 				fmt.Printf("numPeers: %d, "+
 					"nPeersWithFilBitswap: %d, numWantsFil: %d, nblksFil: %d, "+
-					"nPeersWithIpfsBitswap: %d, numWantsIpfs: %d, nblksIpfs: %d \n",
-					len(peers), nPeersWithFilBitswap, nwantsFil, nFilBlks, nPeersWithIpfsBitswap, nwantsIpfs, nIpfsBlks)
+					"nPeersWithIpfsBitswap: %d, numWantsIpfs: %d, nblksIpfs: %d \n"+
+					"numberOfBlocksLoaded: %d\n",
+					len(peers), nPeersWithFilBitswap, nwantsFil, nFilBlks, nPeersWithIpfsBitswap, nwantsIpfs, nIpfsBlks, len(cbs.m),
+				)
+				cbs.mx.Unlock()
+
 			}
 		}
 	}()
 
-	return bs, nil
+	return cbs, nil
 }
 
 type combineFetcher struct {

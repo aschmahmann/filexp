@@ -125,4 +125,15 @@ func (c *countingBlockstore) Get(ctx context.Context, cid cid.Cid) (blkfmt.Block
 	return blk, nil
 }
 
+func (cbs *countingBlockstore) PrintStats() {
+	cbs.mx.Lock()
+	fmt.Printf("total blocks read: %d\n", len(cbs.m))
+	totalSizeBytes := 0
+	for _, v := range cbs.m {
+		totalSizeBytes += v
+	}
+	cbs.mx.Unlock()
+	fmt.Printf("total blocks size: %d\n", totalSizeBytes)
+}
+
 var _ blockstore.Blockstore = (*countingBlockstore)(nil)
