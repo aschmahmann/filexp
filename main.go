@@ -12,7 +12,6 @@ import (
 	filabi "github.com/filecoin-project/go-state-types/abi"
 	lotusapi "github.com/filecoin-project/lotus/api"
 	lchtypes "github.com/filecoin-project/lotus/chain/types"
-	"github.com/ipfs/boxo/blockstore"
 	"github.com/ipfs/go-cid"
 	"github.com/urfave/cli/v2"
 )
@@ -69,11 +68,11 @@ func main() {
 					},
 				}, stateFlags...),
 				Action: func(ctx *cli.Context) error {
-					bs, tsk, err := getState(ctx)
+					bg, tsk, err := getState(ctx)
 					if err != nil {
 						return err
 					}
-					return getActors(ctx.Context, bs, tsk, ctx.Bool("count-only"))
+					return getActors(ctx.Context, bg, tsk, ctx.Bool("count-only"))
 				},
 			},
 			{
@@ -105,7 +104,7 @@ func main() {
 	}
 }
 
-func getState(ctx *cli.Context) (blockstore.Blockstore, lchtypes.TipSetKey, error) {
+func getState(ctx *cli.Context) (*blockGetter, lchtypes.TipSetKey, error) {
 	carSet := ctx.IsSet("car")
 	tsSet := ctx.IsSet("tipset-cids")
 	clSet := ctx.IsSet("trust-chainlove")
@@ -115,11 +114,11 @@ func getState(ctx *cli.Context) (blockstore.Blockstore, lchtypes.TipSetKey, erro
 		if tsSet || clSet {
 			return nil, lchtypes.EmptyTSK, fmt.Errorf("choose only one of CAR, tipset-cids, or trust-chainlove")
 		}
-		bs, tsk, err := getStateFromCar(ctx.Context, carLocation)
+		bg, tsk, err := getStateFromCar(ctx.Context, carLocation)
 		if err != nil {
 			return nil, lchtypes.EmptyTSK, err
 		}
-		return bs, tsk, nil
+		return bg, tsk, nil
 	}
 
 	var tsk lchtypes.TipSetKey
@@ -158,10 +157,10 @@ func getState(ctx *cli.Context) (blockstore.Blockstore, lchtypes.TipSetKey, erro
 		tsk = tipset.Key()
 	}
 
-	bs, err := initBitswapGetter(ctx.Context)
+	bg, err := initBitswapGetter(ctx.Context)
 	if err != nil {
 		return nil, lchtypes.EmptyTSK, err
 	}
 
-	return bs, tsk, nil
+	return bg, tsk, nil
 }

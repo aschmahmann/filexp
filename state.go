@@ -18,8 +18,6 @@ import (
 	lbimsig "github.com/filecoin-project/lotus/chain/actors/builtin/multisig"
 	lchstmgr "github.com/filecoin-project/lotus/chain/stmgr"
 	lchtypes "github.com/filecoin-project/lotus/chain/types"
-	"github.com/ipfs/boxo/blockstore"
-	"github.com/ipfs/go-cid"
 	ipldcbor "github.com/ipfs/go-ipld-cbor"
 	cbg "github.com/whyrusleeping/cbor-gen"
 	"golang.org/x/xerrors"
@@ -27,10 +25,8 @@ import (
 
 var hamtOptions = append(filadt.DefaultHamtOptions, hamt.UseTreeBitWidth(filbuiltin.DefaultHamtBitwidth))
 
-func getCoins(ctx context.Context, bstore blockstore.Blockstore, tsk lchtypes.TipSetKey, addr filaddr.Address) (defErr error) {
-	cbs := &countingBlockstore{Blockstore: bstore, m: make(map[cid.Cid]int)}
-	ebs := NewEphemeralBlockstore(cbs)
-	sm, err := newFilStateReader(ebs)
+func getCoins(ctx context.Context, bg *blockGetter, tsk lchtypes.TipSetKey, addr filaddr.Address) (defErr error) {
+	sm, err := newFilStateReader(bg)
 	if err != nil {
 		return xerrors.Errorf("unable to initialize a StateManager: %w", err)
 	}
@@ -46,7 +42,7 @@ func getCoins(ctx context.Context, bstore blockstore.Blockstore, tsk lchtypes.Ti
 	}
 
 	fmt.Printf("total attofil: %s\n", foundAttoFil)
-	cbs.PrintStats()
+	bg.PrintStats()
 	return
 }
 
@@ -133,10 +129,8 @@ func parseActors(ctx context.Context, sm *lchstmgr.StateManager, ts *lchtypes.Ti
 	})
 }
 
-func getActors(ctx context.Context, bstore blockstore.Blockstore, tsk lchtypes.TipSetKey, countOnly bool) error {
-	cbs := &countingBlockstore{Blockstore: bstore, m: make(map[cid.Cid]int)}
-	ebs := NewEphemeralBlockstore(cbs)
-	sm, err := newFilStateReader(ebs)
+func getActors(ctx context.Context, bg *blockGetter, tsk lchtypes.TipSetKey, countOnly bool) error {
+	sm, err := newFilStateReader(bg)
 	if err != nil {
 		return xerrors.Errorf("unable to initialize a StateManager: %w", err)
 	}
@@ -188,14 +182,12 @@ func getActors(ctx context.Context, bstore blockstore.Blockstore, tsk lchtypes.T
 	}
 
 	fmt.Printf("total actors found: %d\n", numActors)
-	cbs.PrintStats()
+	bg.PrintStats()
 	return nil
 }
 
-func getBalance(ctx context.Context, bstore blockstore.Blockstore, tsk lchtypes.TipSetKey, addr filaddr.Address) error {
-	cbs := &countingBlockstore{Blockstore: bstore, m: make(map[cid.Cid]int)}
-	ebs := NewEphemeralBlockstore(cbs)
-	sm, err := newFilStateReader(ebs)
+func getBalance(ctx context.Context, bg *blockGetter, tsk lchtypes.TipSetKey, addr filaddr.Address) error {
+	sm, err := newFilStateReader(bg)
 	if err != nil {
 		return xerrors.Errorf("unable to initialize a StateManager: %w", err)
 	}
@@ -215,6 +207,6 @@ func getBalance(ctx context.Context, bstore blockstore.Blockstore, tsk lchtypes.
 	}
 
 	fmt.Printf("total actor balance: %s\n", act.Balance)
-	cbs.PrintStats()
+	bg.PrintStats()
 	return nil
 }

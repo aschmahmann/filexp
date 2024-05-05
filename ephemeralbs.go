@@ -4,17 +4,18 @@ import (
 	"context"
 
 	lotusbs "github.com/filecoin-project/lotus/blockstore"
-	ipfsbs "github.com/ipfs/boxo/blockstore"
 	blkfmt "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
 	ds "github.com/ipfs/go-datastore"
 	dssync "github.com/ipfs/go-datastore/sync"
+	ipldcbor "github.com/ipfs/go-ipld-cbor"
+	ipldfmt "github.com/ipfs/go-ipld-format"
 	"golang.org/x/xerrors"
 )
 
 // copied from github.com/ribasushi/fil-fip36-vote-tally
 
-func NewEphemeralBlockstore(wrapped ipfsbs.Blockstore) lotusbs.Blockstore {
+func NewEphemeralBlockstore(wrapped ipldcbor.IpldBlockstore) lotusbs.Blockstore {
 	return lotusbs.NewIDStore(&ephbs{
 		ramBs:     lotusbs.FromDatastore(dssync.MutexWrap(ds.NewMapDatastore())),
 		wrappedBs: wrapped,
@@ -23,10 +24,11 @@ func NewEphemeralBlockstore(wrapped ipfsbs.Blockstore) lotusbs.Blockstore {
 
 type ephbs struct {
 	ramBs     lotusbs.Blockstore
-	wrappedBs ipfsbs.Blockstore
+	wrappedBs ipldcbor.IpldBlockstore
 }
 
-var _ = lotusbs.Blockstore(&ephbs{})
+var _ lotusbs.Blockstore = &ephbs{}
+var _ ipldcbor.IpldBlockstore = &ephbs{}
 
 // don't bother
 func (e *ephbs) AllKeysChan(context.Context) (<-chan cid.Cid, error) {
@@ -38,9 +40,7 @@ func (e *ephbs) DeleteMany(context.Context, []cid.Cid) error {
 func (e *ephbs) DeleteBlock(context.Context, cid.Cid) error {
 	return xerrors.Errorf("method DeleteBlock is not supported ")
 }
-
-// whatever
-func (e *ephbs) HashOnRead(enable bool) { e.wrappedBs.HashOnRead(enable) }
+func (e *ephbs) HashOnRead(enable bool) {}
 
 // implement the rest properly
 func (e *ephbs) Put(ctx context.Context, blk blkfmt.Block) error { return e.ramBs.Put(ctx, blk) }
@@ -60,7 +60,12 @@ func (e *ephbs) Has(ctx context.Context, c cid.Cid) (bool, error) {
 		return ramHas, nil
 
 	default:
-		return e.wrappedBs.Has(ctx, c)
+		// temporary ickyness
+		b, err := e.wrappedBs.Get(ctx, c)
+		if ipldfmt.IsNotFound(err) {
+			err = nil
+		}
+		return b != nil, err
 	}
 }
 
@@ -94,7 +99,12 @@ func (e *ephbs) GetSize(ctx context.Context, c cid.Cid) (int, error) {
 		return e.ramBs.GetSize(ctx, c)
 
 	default:
-		return e.wrappedBs.GetSize(ctx, c)
+		// temporary ickyness
+		b, err := e.wrappedBs.Get(ctx, c)
+		if err != nil {
+			return -1, err
+		}
+		return len(b.RawData()), nil
 	}
 }
 

@@ -8,25 +8,25 @@ import (
 	"sync"
 	"time"
 
-	lotusbs "github.com/filecoin-project/lotus/blockstore"
 	lchstmgr "github.com/filecoin-project/lotus/chain/stmgr"
 	lchstore "github.com/filecoin-project/lotus/chain/store"
 	lchtypes "github.com/filecoin-project/lotus/chain/types"
-	"github.com/ipfs/boxo/blockstore"
 	blkfmt "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
 	ds "github.com/ipfs/go-datastore"
+	ipldcbor "github.com/ipfs/go-ipld-cbor"
 	"github.com/ipld/go-car/v2"
 	carbs "github.com/ipld/go-car/v2/blockstore"
 	caridx "github.com/ipld/go-car/v2/index"
 	"golang.org/x/xerrors"
 )
 
-func newFilStateReader(bs lotusbs.Blockstore) (*lchstmgr.StateManager, error) {
+func newFilStateReader(bsrc ipldcbor.IpldBlockstore) (*lchstmgr.StateManager, error) {
+	ebs := NewEphemeralBlockstore(bsrc)
 	return lchstmgr.NewStateManager(
 		lchstore.NewChainStore(
-			bs,
-			bs,
+			ebs,
+			ebs,
 			ds.NewMapDatastore(),
 			nil,
 			nil,
@@ -40,7 +40,7 @@ func newFilStateReader(bs lotusbs.Blockstore) (*lchstmgr.StateManager, error) {
 	)
 }
 
-func getStateFromCar(ctx context.Context, srcSnapshot string) (blockstore.Blockstore, lchtypes.TipSetKey, error) {
+func getStateFromCar(ctx context.Context, srcSnapshot string) (*blockGetter, lchtypes.TipSetKey, error) {
 	start := time.Now()
 	defer func() {
 		fmt.Printf("duration: %v\n", time.Since(start))
@@ -60,7 +60,10 @@ func getStateFromCar(ctx context.Context, srcSnapshot string) (blockstore.Blocks
 	}
 	tsk = lchtypes.NewTipSetKey(carRoots...)
 
-	return carbs, tsk, nil
+	return &blockGetter{
+		m:              make(map[cid.Cid]int),
+		IpldBlockstore: carbs,
+	}, tsk, nil
 }
 
 func blockstoreFromSnapshot(_ context.Context, snapshotFilename string) (*carbs.ReadOnly, error) {
@@ -106,34 +109,34 @@ func blockstoreFromSnapshot(_ context.Context, snapshotFilename string) (*carbs.
 	return roBs, nil
 }
 
-type countingBlockstore struct {
-	blockstore.Blockstore
+type blockGetter struct {
+	ipldcbor.IpldBlockstore
 	mx sync.Mutex
 	m  map[cid.Cid]int
 }
 
-func (c *countingBlockstore) Get(ctx context.Context, cid cid.Cid) (blkfmt.Block, error) {
-	blk, err := c.Blockstore.Get(ctx, cid)
+func (bg *blockGetter) Get(ctx context.Context, cid cid.Cid) (blkfmt.Block, error) {
+	blk, err := bg.IpldBlockstore.Get(ctx, cid)
 	if err != nil {
 		return nil, err
 	}
 
-	c.mx.Lock()
-	c.m[cid] = len(blk.RawData())
-	c.mx.Unlock()
+	bg.mx.Lock()
+	bg.m[cid] = len(blk.RawData())
+	bg.mx.Unlock()
 
 	return blk, nil
 }
 
-func (cbs *countingBlockstore) PrintStats() {
-	cbs.mx.Lock()
-	fmt.Printf("total blocks read: %d\n", len(cbs.m))
+func (bg *blockGetter) PrintStats() {
+	bg.mx.Lock()
+	fmt.Printf("total blocks read: %d\n", len(bg.m))
 	totalSizeBytes := 0
-	for _, v := range cbs.m {
+	for _, v := range bg.m {
 		totalSizeBytes += v
 	}
-	cbs.mx.Unlock()
+	bg.mx.Unlock()
 	fmt.Printf("total blocks size: %d\n", totalSizeBytes)
 }
 
-var _ blockstore.Blockstore = (*countingBlockstore)(nil)
+var _ ipldcbor.IpldBlockstore = &blockGetter{}

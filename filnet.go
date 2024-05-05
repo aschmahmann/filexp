@@ -19,6 +19,7 @@ import (
 	"github.com/ipfs/go-cid"
 	"github.com/ipfs/go-datastore"
 	leveldb "github.com/ipfs/go-ds-leveldb"
+	ipldcbor "github.com/ipfs/go-ipld-cbor"
 	ipldfmt "github.com/ipfs/go-ipld-format"
 	"github.com/libp2p/go-libp2p"
 	dht "github.com/libp2p/go-libp2p-kad-dht"
@@ -129,7 +130,7 @@ func setupPubSub(ctx context.Context, h host.Host) error {
 	}
 }
 
-func initBitswapGetter(ctx context.Context) (blockstore.Blockstore, error) {
+func initBitswapGetter(ctx context.Context) (*blockGetter, error) {
 	start := time.Now()
 	defer func() {
 		fmt.Printf("duration to setup bitswap fetching: %v\n", time.Since(start))
@@ -158,12 +159,12 @@ func initBitswapGetter(ctx context.Context) (blockstore.Blockstore, error) {
 		bscFil.NewSession(ctx),
 		bscIpfs.NewSession(ctx),
 	}
-	cbs := &countingBlockstore{
+	bg := &blockGetter{
 		m: make(map[cid.Cid]int),
-		Blockstore: blockstore.NewIdStore(&bservBstoreWrapper{
-			Blockstore: blockstore.NewBlockstore(lds),
-			bserv:      cf,
-		}),
+		IpldBlockstore: &bservWrapper{
+			IpldBlockstore: blockstore.NewBlockstore(lds),
+			bserv:          cf,
+		},
 	}
 
 	go func() {
@@ -197,20 +198,20 @@ func initBitswapGetter(ctx context.Context) (blockstore.Blockstore, error) {
 				nwantsIpfs := len(bscIpfs.GetWantlist())
 				nFilBlks := atomic.LoadUint64(&cf.numFirstBlocks)
 				nIpfsBlks := atomic.LoadUint64(&cf.numSecondBlocks)
-				cbs.mx.Lock()
+				bg.mx.Lock()
 				fmt.Printf("numPeers: %d, "+
 					"nPeersWithFilBitswap: %d, numWantsFil: %d, nblksFil: %d, "+
 					"nPeersWithIpfsBitswap: %d, numWantsIpfs: %d, nblksIpfs: %d \n"+
 					"numberOfBlocksLoaded: %d\n",
-					len(peers), nPeersWithFilBitswap, nwantsFil, nFilBlks, nPeersWithIpfsBitswap, nwantsIpfs, nIpfsBlks, len(cbs.m),
+					len(peers), nPeersWithFilBitswap, nwantsFil, nFilBlks, nPeersWithIpfsBitswap, nwantsIpfs, nIpfsBlks, len(bg.m),
 				)
-				cbs.mx.Unlock()
+				bg.mx.Unlock()
 
 			}
 		}
 	}()
 
-	return cbs, nil
+	return bg, nil
 }
 
 type combineFetcher struct {
@@ -263,18 +264,18 @@ func (f *combineFetcher) GetBlocks(ctx context.Context, cids []cid.Cid) (<-chan 
 var _ exchange.Fetcher = (*combineFetcher)(nil)
 
 // this is the wrong way around, but this is the easiest way to hack it
-type bservBstoreWrapper struct {
-	blockstore.Blockstore
+type bservWrapper struct {
+	ipldcbor.IpldBlockstore
 	bserv exchange.Fetcher
 }
 
-func (b *bservBstoreWrapper) Get(ctx context.Context, c cid.Cid) (blkfmt.Block, error) {
+func (bw *bservWrapper) Get(ctx context.Context, c cid.Cid) (blkfmt.Block, error) {
 	// hash security
 	if err := verifcid.ValidateCid(verifcid.DefaultAllowlist, c); err != nil {
 		return nil, err
 	}
 
-	block, err := b.Blockstore.Get(ctx, c)
+	block, err := bw.IpldBlockstore.Get(ctx, c)
 	if err == nil {
 		return block, nil
 	}
@@ -282,12 +283,12 @@ func (b *bservBstoreWrapper) Get(ctx context.Context, c cid.Cid) (blkfmt.Block, 
 	if ipldfmt.IsNotFound(err) {
 		// TODO be careful checking ErrNotFound. If the underlying
 		// implementation changes, this will break.
-		blk, err := b.bserv.GetBlock(ctx, c)
+		blk, err := bw.bserv.GetBlock(ctx, c)
 		if err != nil {
 			return nil, err
 		}
 		// also write in the blockstore for caching
-		err = b.Blockstore.Put(ctx, blk)
+		err = bw.IpldBlockstore.Put(ctx, blk)
 		if err != nil {
 			return nil, err
 		}
@@ -297,28 +298,4 @@ func (b *bservBstoreWrapper) Get(ctx context.Context, c cid.Cid) (blkfmt.Block, 
 	return nil, err
 }
 
-func (b *bservBstoreWrapper) GetSize(ctx context.Context, c cid.Cid) (int, error) {
-	has, err := b.Blockstore.Has(ctx, c)
-	if has {
-		return b.Blockstore.GetSize(ctx, c)
-	}
-	if !ipldfmt.IsNotFound(err) {
-		// TODO be careful checking ErrNotFound. If the underlying
-		// implementation changes, this will break.
-		return 0, err
-	}
-
-	blk, err := b.bserv.GetBlock(ctx, c)
-	if err != nil {
-		return 0, err
-	}
-	// also write in the blockstore for caching
-	err = b.Blockstore.Put(ctx, blk)
-	if err != nil {
-		return 0, err
-	}
-
-	return len(blk.RawData()), nil
-}
-
-var _ blockstore.Blockstore = (*bservBstoreWrapper)(nil)
+var _ ipldcbor.IpldBlockstore = &bservWrapper{}
