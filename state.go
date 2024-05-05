@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	filaddr "github.com/filecoin-project/go-address"
 	hamt "github.com/filecoin-project/go-hamt-ipld/v3"
@@ -32,8 +31,6 @@ import (
 	"github.com/ipfs/go-cid"
 	ipldcbor "github.com/ipfs/go-ipld-cbor"
 	cbg "github.com/whyrusleeping/cbor-gen"
-
-	"golang.org/x/sync/errgroup"
 	"golang.org/x/xerrors"
 )
 
@@ -52,39 +49,13 @@ func getCoins(ctx context.Context, bstore blockstore.Blockstore, tsk lchtypes.Ti
 		return xerrors.Errorf("unable to load target tipset: %w", err)
 	}
 
-	eg, shCtx := errgroup.WithContext(ctx)
-
 	foundAttoFil := filabi.NewTokenAmount(0)
-
-	go func() {
-		ticker := time.NewTicker(10 * time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-shCtx.Done():
-				return
-			case <-ticker.C:
-				cbs.mx.Lock()
-				nb := len(cbs.m)
-				cbs.mx.Unlock()
-				fmt.Printf("numberOfBlocksLoaded: %d \n", nb)
-			}
-		}
-	}()
-
-	eg.Go(func() error { return parseActors(shCtx, sm, ts, addr, foundAttoFil) })
-	err = eg.Wait()
-	if err != nil {
+	if err := parseActors(ctx, sm, ts, addr, foundAttoFil); err != nil {
 		return err
 	}
 
 	fmt.Printf("total attofil: %s\n", foundAttoFil)
-	fmt.Printf("total blocks read: %d\n", len(cbs.m))
-	totalSizeBytes := 0
-	for _, v := range cbs.m {
-		totalSizeBytes += v
-	}
-	fmt.Printf("total block sizes: %d\n", totalSizeBytes)
+	cbs.PrintStats()
 	return
 }
 
@@ -184,76 +155,49 @@ func getActors(ctx context.Context, bstore blockstore.Blockstore, tsk lchtypes.T
 		return xerrors.Errorf("unable to load target tipset: %w", err)
 	}
 
-	eg, shCtx := errgroup.WithContext(ctx)
-
-	go func() {
-		ticker := time.NewTicker(10 * time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-shCtx.Done():
-				return
-			case <-ticker.C:
-				cbs.mx.Lock()
-				nb := len(cbs.m)
-				cbs.mx.Unlock()
-				fmt.Printf("numberOfBlocksLoaded: %d \n", nb)
-			}
-		}
-	}()
-
 	var numActors uint64
 
-	eg.Go(func() error {
-		ast := filstore.WrapStore(ctx, ipldcbor.NewCborStore(sm.ChainStore().UnionStore()))
-		getManyAst := &getManyCborStore{
-			BasicIpldStore: ipldcbor.NewCborStore(sm.ChainStore().StateBlockstore())}
+	ast := filstore.WrapStore(ctx, ipldcbor.NewCborStore(sm.ChainStore().UnionStore()))
+	getManyAst := &getManyCborStore{
+		BasicIpldStore: ipldcbor.NewCborStore(sm.ChainStore().StateBlockstore())}
 
-		var root lchtypes.StateRoot
-		// Try loading as a new-style state-tree (version/actors tuple).
-		if err := ast.Get(context.TODO(), ts.ParentState(), &root); err != nil {
-			return err
-		}
+	var root lchtypes.StateRoot
+	// Try loading as a new-style state-tree (version/actors tuple).
+	if err := ast.Get(context.TODO(), ts.ParentState(), &root); err != nil {
+		return err
+	}
 
-		node, err := hamt.LoadNode(ctx, getManyAst, root.Actors, hamtOptions...)
-		if err != nil {
-			return err
-		}
-
-		return node.ForEachParallel(ctx, func(k string, val *cbg.Deferred) error {
-			act := &lchtypes.Actor{}
-			addr, err := filaddr.NewFromBytes([]byte(k))
-			if err != nil {
-				return xerrors.Errorf("invalid address (%x) found in state tree key: %w", []byte(k), err)
-			}
-
-			err = act.UnmarshalCBOR(bytes.NewReader(val.Raw))
-			if err != nil {
-				return err
-			}
-
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-			atomic.AddUint64(&numActors, 1)
-			if !countOnly {
-				fmt.Printf("%v\n", addr)
-			}
-			return nil
-		})
-	})
-	err = eg.Wait()
+	node, err := hamt.LoadNode(ctx, getManyAst, root.Actors, hamtOptions...)
 	if err != nil {
 		return err
 	}
 
-	fmt.Printf("total actors found: %d\n", numActors)
-	fmt.Printf("total blocks read: %d\n", len(cbs.m))
-	totalSizeBytes := 0
-	for _, v := range cbs.m {
-		totalSizeBytes += v
+	if err := node.ForEachParallel(ctx, func(k string, val *cbg.Deferred) error {
+		act := &lchtypes.Actor{}
+		addr, err := filaddr.NewFromBytes([]byte(k))
+		if err != nil {
+			return xerrors.Errorf("invalid address (%x) found in state tree key: %w", []byte(k), err)
+		}
+
+		err = act.UnmarshalCBOR(bytes.NewReader(val.Raw))
+		if err != nil {
+			return err
+		}
+
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		atomic.AddUint64(&numActors, 1)
+		if !countOnly {
+			fmt.Printf("%v\n", addr)
+		}
+		return nil
+	}); err != nil {
+		return err
 	}
-	fmt.Printf("total block sizes: %d\n", totalSizeBytes)
+
+	fmt.Printf("total actors found: %d\n", numActors)
+	cbs.PrintStats()
 	return nil
 }
 
@@ -280,12 +224,7 @@ func getBalance(ctx context.Context, bstore blockstore.Blockstore, tsk lchtypes.
 	}
 
 	fmt.Printf("total actor balance: %s\n", act.Balance)
-	fmt.Printf("total blocks read: %d\n", len(cbs.m))
-	totalSizeBytes := 0
-	for _, v := range cbs.m {
-		totalSizeBytes += v
-	}
-	fmt.Printf("total block sizes: %d\n", totalSizeBytes)
+	cbs.PrintStats()
 	return nil
 }
 
@@ -333,12 +272,7 @@ func fevmExec(ctx context.Context, bstore blockstore.Blockstore, tsk lchtypes.Ti
 
 	fmt.Println(string(str))
 
-	fmt.Printf("total blocks read: %d\n", len(cbs.m))
-	totalSizeBytes = 0
-	for _, v := range cbs.m {
-		totalSizeBytes += v
-	}
-	fmt.Printf("total block sizes: %d\n", totalSizeBytes)
+	cbs.PrintStats()
 
 	cidsInOrder := cbs.orderedCids
 	if err != nil {
