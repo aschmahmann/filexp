@@ -16,7 +16,6 @@ import (
 	filadt "github.com/filecoin-project/go-state-types/builtin/v13/util/adt"
 	filstore "github.com/filecoin-project/go-state-types/store"
 
-	lotusbs "github.com/filecoin-project/lotus/blockstore"
 	"github.com/filecoin-project/lotus/build"
 	"github.com/filecoin-project/lotus/chain/actors"
 	"github.com/filecoin-project/lotus/chain/types/ethtypes"
@@ -27,7 +26,6 @@ import (
 	lchstmgr "github.com/filecoin-project/lotus/chain/stmgr"
 	lchtypes "github.com/filecoin-project/lotus/chain/types"
 
-	"github.com/ipfs/boxo/blockstore"
 	"github.com/ipfs/go-cid"
 	ipldcbor "github.com/ipfs/go-ipld-cbor"
 	cbg "github.com/whyrusleeping/cbor-gen"
@@ -36,10 +34,8 @@ import (
 
 var hamtOptions = append(filadt.DefaultHamtOptions, hamt.UseTreeBitWidth(filbuiltin.DefaultHamtBitwidth))
 
-func getCoins(ctx context.Context, bstore blockstore.Blockstore, tsk lchtypes.TipSetKey, addr filaddr.Address) (defErr error) {
-	cbs := &countingBlockstore{Blockstore: bstore, m: make(map[cid.Cid]int)}
-	ebs := NewEphemeralBlockstore(cbs)
-	sm, err := newFilStateReader(ebs)
+func getCoins(ctx context.Context, bg *blockGetter, tsk lchtypes.TipSetKey, addr filaddr.Address) (defErr error) {
+	sm, err := newFilStateReader(bg)
 	if err != nil {
 		return xerrors.Errorf("unable to initialize a StateManager: %w", err)
 	}
@@ -55,7 +51,7 @@ func getCoins(ctx context.Context, bstore blockstore.Blockstore, tsk lchtypes.Ti
 	}
 
 	fmt.Printf("total attofil: %s\n", foundAttoFil)
-	cbs.PrintStats()
+	bg.PrintStats()
 	return
 }
 
@@ -142,10 +138,8 @@ func parseActors(ctx context.Context, sm *lchstmgr.StateManager, ts *lchtypes.Ti
 	})
 }
 
-func getActors(ctx context.Context, bstore blockstore.Blockstore, tsk lchtypes.TipSetKey, countOnly bool) error {
-	cbs := &countingBlockstore{Blockstore: bstore, m: make(map[cid.Cid]int)}
-	ebs := NewEphemeralBlockstore(cbs)
-	sm, err := newFilStateReader(ebs)
+func getActors(ctx context.Context, bg *blockGetter, tsk lchtypes.TipSetKey, countOnly bool) error {
+	sm, err := newFilStateReader(bg)
 	if err != nil {
 		return xerrors.Errorf("unable to initialize a StateManager: %w", err)
 	}
@@ -197,14 +191,12 @@ func getActors(ctx context.Context, bstore blockstore.Blockstore, tsk lchtypes.T
 	}
 
 	fmt.Printf("total actors found: %d\n", numActors)
-	cbs.PrintStats()
+	bg.PrintStats()
 	return nil
 }
 
-func getBalance(ctx context.Context, bstore blockstore.Blockstore, tsk lchtypes.TipSetKey, addr filaddr.Address) error {
-	cbs := &countingBlockstore{Blockstore: bstore, m: make(map[cid.Cid]int)}
-	ebs := NewEphemeralBlockstore(cbs)
-	sm, err := newFilStateReader(ebs)
+func getBalance(ctx context.Context, bg *blockGetter, tsk lchtypes.TipSetKey, addr filaddr.Address) error {
+	sm, err := newFilStateReader(bg)
 	if err != nil {
 		return xerrors.Errorf("unable to initialize a StateManager: %w", err)
 	}
@@ -224,18 +216,21 @@ func getBalance(ctx context.Context, bstore blockstore.Blockstore, tsk lchtypes.
 	}
 
 	fmt.Printf("total actor balance: %s\n", act.Balance)
-	cbs.PrintStats()
+	bg.PrintStats()
 	return nil
 }
 
-func fevmExec(ctx context.Context, bstore blockstore.Blockstore, tsk lchtypes.TipSetKey, eaddr *ethtypes.EthAddress, edata ethtypes.EthBytes, outputCAR string) error {
-	cbs := &countingBlockstore{Blockstore: bstore, m: make(map[cid.Cid]int)}
-	ebs := NewEphemeralBlockstore(cbs)
-	ts, sm, filMsg, err := getFevmRequest(ctx, ebs, tsk, eaddr, edata)
+func fevmExec(ctx context.Context, bg *blockGetter, ts *lchtypes.TipSet, eaddr *ethtypes.EthAddress, edata ethtypes.EthBytes, outputCAR string) error {
+	filMsg, err := getFevmRequest(eaddr, edata)
 	if err != nil {
 		return err
 	}
 	fmt.Printf("epoch %s\n", ts.Height())
+
+	sm, err := newFilStateReader(bg)
+	if err != nil {
+		return err
+	}
 
 	act, err := sm.LoadActor(ctx, filMsg.To, ts)
 	if err != nil {
@@ -244,18 +239,12 @@ func fevmExec(ctx context.Context, bstore blockstore.Blockstore, tsk lchtypes.Ti
 	actorStateRoot := act.Head
 	fmt.Printf("actor state root: %s\n", actorStateRoot)
 
-	_, err = ebs.Get(ctx, actorStateRoot)
+	_, err = bg.Get(ctx, actorStateRoot)
 	if err != nil {
 		return fmt.Errorf("error loading state root %w", err)
 	}
 
-	fmt.Printf("total blocks read: %d\n", len(cbs.m))
-	totalSizeBytes := 0
-	for _, v := range cbs.m {
-		totalSizeBytes += v
-	}
-	fmt.Printf("total block sizes: %d\n", totalSizeBytes)
-	for _, c := range cbs.orderedCids {
+	for _, c := range bg.orderedCids {
 		fmt.Printf("pre-call cid: %s\n", c)
 	}
 
@@ -272,9 +261,9 @@ func fevmExec(ctx context.Context, bstore blockstore.Blockstore, tsk lchtypes.Ti
 
 	fmt.Println(string(str))
 
-	cbs.PrintStats()
+	bg.PrintStats()
 
-	cidsInOrder := cbs.orderedCids
+	cidsInOrder := bg.orderedCids
 	if err != nil {
 		return err
 	}
@@ -290,7 +279,7 @@ func fevmExec(ctx context.Context, bstore blockstore.Blockstore, tsk lchtypes.Ti
 		}
 
 		for _, c := range cidsInOrder {
-			blk, err := bstore.Get(ctx, c)
+			blk, err := bg.Get(ctx, c)
 			if err != nil {
 				return err
 			}
@@ -307,17 +296,7 @@ func fevmExec(ctx context.Context, bstore blockstore.Blockstore, tsk lchtypes.Ti
 	return nil
 }
 
-func getFevmRequest(ctx context.Context, ebs lotusbs.Blockstore, tsk lchtypes.TipSetKey, eaddr *ethtypes.EthAddress, edata ethtypes.EthBytes) (*lchtypes.TipSet, *lchstmgr.StateManager, *lchtypes.Message, error) {
-	sm, err := newFilStateReader(ebs)
-	if err != nil {
-		return nil, nil, nil, xerrors.Errorf("unable to initialize a StateManager: %w", err)
-	}
-
-	ts, err := sm.ChainStore().GetTipSetFromKey(ctx, tsk)
-	if err != nil {
-		return nil, nil, nil, xerrors.Errorf("unable to load target tipset: %w", err)
-	}
-
+func getFevmRequest(eaddr *ethtypes.EthAddress, edata ethtypes.EthBytes) (*lchtypes.Message, error) {
 	tx := ethtypes.EthCall{
 		From:     nil,
 		To:       eaddr,
@@ -326,15 +305,15 @@ func getFevmRequest(ctx context.Context, ebs lotusbs.Blockstore, tsk lchtypes.Ti
 		Value:    ethtypes.EthBigInt{},
 		Data:     edata,
 	}
-	filMsg, err := ethCallToFilecoinMessage(ctx, tx)
+	filMsg, err := ethCallToFilecoinMessage(tx)
 	if err != nil {
-		return nil, nil, nil, xerrors.Errorf("unable to convert ethcall to filecoin message: %w", err)
+		return nil, xerrors.Errorf("unable to convert ethcall to filecoin message: %w", err)
 	}
 
-	return ts, sm, filMsg, nil
+	return filMsg, nil
 }
 
-func ethCallToFilecoinMessage(ctx context.Context, tx ethtypes.EthCall) (*lchtypes.Message, error) {
+func ethCallToFilecoinMessage(tx ethtypes.EthCall) (*lchtypes.Message, error) {
 	var from filaddr.Address
 	if tx.From == nil || *tx.From == (ethtypes.EthAddress{}) {
 		// Send from the filecoin "system" address.

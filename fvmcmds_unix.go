@@ -20,8 +20,8 @@ import (
 	"github.com/filecoin-project/go-jsonrpc"
 	"github.com/filecoin-project/go-state-types/abi"
 	lotusapi "github.com/filecoin-project/lotus/api"
-	lotusbs "github.com/filecoin-project/lotus/blockstore"
-	"github.com/filecoin-project/lotus/chain/types"
+	lchstmgr "github.com/filecoin-project/lotus/chain/stmgr"
+	lchtypes "github.com/filecoin-project/lotus/chain/types"
 	"github.com/filecoin-project/lotus/chain/types/ethtypes"
 )
 
@@ -41,7 +41,16 @@ func cmdFevmExec(ctx *cli.Context) error {
 		return err
 	}
 
-	return fevmExec(ctx.Context, bs, tsk, &eaddr, decodedBytes, ctx.Path("output"))
+	sm, err := newFilStateReader(bs)
+	if err != nil {
+		return err
+	}
+	ts, err := sm.ChainStore().GetTipSetFromKey(ctx.Context, tsk)
+	if err != nil {
+		return err
+	}
+
+	return fevmExec(ctx.Context, bs, ts, &eaddr, decodedBytes, ctx.Path("output"))
 }
 
 func cmdFevmDaemon(ctx *cli.Context) error {
@@ -56,11 +65,10 @@ func cmdFevmDaemon(ctx *cli.Context) error {
 		return err
 	}
 
-	bs, tsk, err := getState(ctx)
+	bg, tsk, err := getState(ctx)
 	if err != nil {
 		return err
 	}
-	ebs := NewEphemeralBlockstore(bs)
 
 	addr := "api.chain.love"
 	var api lotusapi.FullNodeStruct
@@ -70,9 +78,18 @@ func cmdFevmDaemon(ctx *cli.Context) error {
 	}
 	defer closer()
 
+	sm, err := newFilStateReader(bg)
+	if err != nil {
+		return err
+	}
+	ts, err := sm.ChainStore().GetTipSetFromKey(ctx.Context, tsk)
+	if err != nil {
+		return err
+	}
+
 	erpc := &ethRpcResolver{
-		lbs:          ebs,
-		tsk:          tsk,
+		sm:           sm,
+		ts:           ts,
 		lastTskCheck: time.Now(),
 		api:          api,
 	}
@@ -158,40 +175,43 @@ func cmdFevmDaemon(ctx *cli.Context) error {
 }
 
 type ethRpcResolver struct {
-	lbs          lotusbs.Blockstore
-	tsk          types.TipSetKey
-	tskMx        sync.RWMutex
+	sm           *lchstmgr.StateManager
+	ts           *lchtypes.TipSet
+	tsMx         sync.RWMutex
 	lastTskCheck time.Time
 	api          lotusapi.FullNodeStruct
 }
 
 func (e *ethRpcResolver) Call(ctx context.Context, eaddr ethtypes.EthAddress, methodData ethtypes.EthBytes) ([]byte, error) {
-	e.tskMx.RLock()
+	e.tsMx.RLock()
 	updateTsk := false
 	if time.Since(e.lastTskCheck) > time.Second*30 {
 		updateTsk = true
 	}
-	e.tskMx.RUnlock()
+	callTS := e.ts
+	e.tsMx.RUnlock()
+
 	if updateTsk {
-		e.tskMx.Lock()
+		e.tsMx.Lock()
 		if time.Since(e.lastTskCheck) > time.Second*30 {
 			ts, err := e.api.ChainHead(ctx)
 			if err != nil {
 				log.Printf("could not update tipset %s", err.Error())
 			} else {
 				e.lastTskCheck = time.Now()
-				e.tsk = ts.Key()
+				e.ts = ts
 			}
 		}
-		e.tskMx.Unlock()
+		callTS = e.ts
+		e.tsMx.Unlock()
 	}
 
-	ts, sm, filMsg, err := getFevmRequest(ctx, e.lbs, e.tsk, &eaddr, methodData)
+	filMsg, err := getFevmRequest(&eaddr, methodData)
 	if err != nil {
 		return nil, err
 	}
 
-	res, err := sm.Call(ctx, filMsg, ts)
+	res, err := e.sm.Call(ctx, filMsg, callTS)
 	if err != nil {
 		return nil, xerrors.Errorf("unable to make a call: %w", err)
 	}
