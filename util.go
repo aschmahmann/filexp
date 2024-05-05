@@ -18,6 +18,8 @@ import (
 	"github.com/ipld/go-car/v2"
 	carbs "github.com/ipld/go-car/v2/blockstore"
 	caridx "github.com/ipld/go-car/v2/index"
+	"github.com/ribasushi/go-toolbox-interplanetary/fil"
+	"golang.org/x/sync/errgroup"
 	"golang.org/x/xerrors"
 )
 
@@ -40,7 +42,31 @@ func newFilStateReader(bsrc ipldcbor.IpldBlockstore) (*lchstmgr.StateManager, er
 	)
 }
 
-func getStateFromCar(ctx context.Context, srcSnapshot string) (*blockGetter, lchtypes.TipSetKey, error) {
+func loadBlockData(ctx context.Context, bg *blockGetter, cids []cid.Cid) ([][]byte, error) {
+	blks := make([][]byte, len(cids))
+	if len(cids) == 0 {
+		return blks, nil
+	}
+
+	eg, ctx := errgroup.WithContext(ctx)
+	eg.SetLimit(8)
+
+	for i := range cids {
+		i := i
+		eg.Go(func() error {
+			b, err := bg.Get(ctx, cids[i])
+			if err != nil {
+				return err
+			}
+			blks[i] = b.RawData()
+			return nil
+		})
+	}
+
+	return blks, eg.Wait()
+}
+
+func getStateFromCar(ctx context.Context, srcSnapshot string) (*blockGetter, *fil.LotusTSK, error) {
 	start := time.Now()
 	defer func() {
 		fmt.Printf("duration: %v\n", time.Since(start))
@@ -48,22 +74,21 @@ func getStateFromCar(ctx context.Context, srcSnapshot string) (*blockGetter, lch
 
 	carbs, err := blockstoreFromSnapshot(ctx, srcSnapshot)
 	if err != nil {
-		return nil, lchtypes.EmptyTSK, err
+		return nil, nil, err
 	}
 
 	fmt.Printf("duration to load snapshot: %v\n", time.Since(start))
 
-	var tsk lchtypes.TipSetKey
 	carRoots, err := carbs.Roots()
 	if err != nil {
-		return nil, lchtypes.EmptyTSK, err
+		return nil, nil, err
 	}
-	tsk = lchtypes.NewTipSetKey(carRoots...)
+	tsk := lchtypes.NewTipSetKey(carRoots...)
 
 	return &blockGetter{
 		m:              make(map[cid.Cid]int),
 		IpldBlockstore: carbs,
-	}, tsk, nil
+	}, &tsk, nil
 }
 
 func blockstoreFromSnapshot(_ context.Context, snapshotFilename string) (*carbs.ReadOnly, error) {

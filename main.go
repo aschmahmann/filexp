@@ -1,33 +1,42 @@
 package main
 
 import (
-	"context"
-	"fmt"
 	"log"
 	"os"
-	"time"
+	"strings"
 
 	filaddr "github.com/filecoin-project/go-address"
-	"github.com/filecoin-project/go-jsonrpc"
 	filabi "github.com/filecoin-project/go-state-types/abi"
-	lotusapi "github.com/filecoin-project/lotus/api"
 	lchtypes "github.com/filecoin-project/lotus/chain/types"
 	"github.com/ipfs/go-cid"
+	"github.com/ribasushi/go-toolbox-interplanetary/fil"
+	"github.com/ribasushi/go-toolbox/cmn"
 	"github.com/urfave/cli/v2"
+	"golang.org/x/xerrors"
 )
 
 var stateFlags = []cli.Flag{
 	&cli.PathFlag{
 		Name:  "car",
-		Usage: "path to state CAR",
+		Usage: "Path to state snapshot CAR, tipset inferred from car root",
 	},
 	&cli.StringSliceFlag{
 		Name:  "tipset-cids",
-		Usage: "tipset CIDs for use when downloading state over the network",
+		Usage: "Specific tipset CIDs to get directly over libp2p",
+	},
+	&cli.StringFlag{
+		Name:  "rpc-endpoint",
+		Usage: "Filecoin RPC API endpoint to determine current tipset",
+	},
+	&cli.UintFlag{
+		Name:        "lookback-epochs",
+		Value:       20, // good for WdPoST - good for us: https://github.com/filecoin-project/builtin-actors/blob/v13.0.0/runtime/src/runtime/policy.rs#L290-L293
+		DefaultText: "20 epochs / 10 minutes",
+		Usage:       "How many epochs to look back when pulling state from the network",
 	},
 	&cli.BoolFlag{
 		Name:  "trust-chainlove",
-		Usage: "ask chain.love for the state from roughly 2 hours ago",
+		Usage: "Equivalent to --rpc-endpoint=https://api.chain.love",
 	},
 }
 
@@ -38,28 +47,25 @@ func main() {
 		Commands: []*cli.Command{
 			{
 				Name:        "msig-coins",
-				Usage:       "<signer-key>",
-				Description: "Add up all of the coins controlled by multisigs with the given signer and signing threshold of 1. Either pass a state CAR, tipset CIDs, or trust chain.love for a recent time",
-				Flags:       stateFlags,
-				Action: func(ctx *cli.Context) error {
-					args := ctx.Args()
-					signerKey := args.Get(0)
-					signerAddr, err := filaddr.NewFromString(signerKey)
+				Usage:       "<signer-address>",
+				Description: "Add up all of the coins controlled by multisigs with the given signer and signing threshold of 1",
+				Flags:       append([]cli.Flag{}, stateFlags...),
+				Action: func(cctx *cli.Context) error {
+					signerAddr, err := filaddr.NewFromString(cctx.Args().Get(0))
 					if err != nil {
-						return err
+						return cmn.WrErr(err)
+					}
+					bg, ts, err := getAnchorPoint(cctx)
+					if err != nil {
+						return cmn.WrErr(err)
 					}
 
-					bs, tsk, err := getState(ctx)
-					if err != nil {
-						return err
-					}
-
-					return getCoins(ctx.Context, bs, tsk, signerAddr)
+					return getCoins(cctx.Context, bg, ts, signerAddr)
 				},
 			},
 			{
 				Name:        "enumerate-actors",
-				Description: "List all actors. Either pass a state CAR, tipset CIDs, or trust chain.love for a recent time",
+				Description: "List all actors",
 				Flags: append([]cli.Flag{
 					&cli.BoolFlag{
 						Name:        "count-only",
@@ -67,100 +73,129 @@ func main() {
 						DefaultText: "will not emit the actor IDs, and just count them",
 					},
 				}, stateFlags...),
-				Action: func(ctx *cli.Context) error {
-					bg, tsk, err := getState(ctx)
+				Action: func(cctx *cli.Context) error {
+					bg, ts, err := getAnchorPoint(cctx)
 					if err != nil {
-						return err
+						return cmn.WrErr(err)
 					}
-					return getActors(ctx.Context, bg, tsk, ctx.Bool("count-only"))
+					return getActors(cctx.Context, bg, ts, cctx.Bool("count-only"))
 				},
 			},
 			{
 				Name:        "get-balance",
-				Description: "Get the balance for a given actor. Either pass a state CAR, tipset CIDs, or trust chain.love for a recent time",
+				Description: "Get the balance for a given actor",
 				Flags:       append([]cli.Flag{}, stateFlags...),
-				Action: func(ctx *cli.Context) error {
-					args := ctx.Args()
-					actorAddrString := args.Get(0)
-					actorAddr, err := filaddr.NewFromString(actorAddrString)
+				Action: func(cctx *cli.Context) error {
+					actorAddr, err := filaddr.NewFromString(cctx.Args().Get(0))
 					if err != nil {
-						return err
+						return cmn.WrErr(err)
 					}
 
-					bs, tsk, err := getState(ctx)
+					bg, ts, err := getAnchorPoint(cctx)
 					if err != nil {
-						return err
+						return cmn.WrErr(err)
 					}
 
-					return getBalance(ctx.Context, bs, tsk, actorAddr)
+					return getBalance(cctx.Context, bg, ts, actorAddr)
 				},
 			},
 		},
 	}
 
-	err := app.Run(os.Args)
-	if err != nil {
-		log.Fatal(err)
+	if err := app.Run(os.Args); err != nil {
+		log.Fatalf("%+v", err)
+		os.Exit(1)
 	}
 }
 
-func getState(ctx *cli.Context) (*blockGetter, lchtypes.TipSetKey, error) {
-	carSet := ctx.IsSet("car")
-	tsSet := ctx.IsSet("tipset-cids")
-	clSet := ctx.IsSet("trust-chainlove")
+func getAnchorPoint(cctx *cli.Context) (*blockGetter, *fil.LotusTS, error) {
 
-	if carSet {
-		carLocation := ctx.String("car")
-		if tsSet || clSet {
-			return nil, lchtypes.EmptyTSK, fmt.Errorf("choose only one of CAR, tipset-cids, or trust-chainlove")
+	sourceSelect := []string{"car", "tipset-cids", "rpc-endpoint"}
+
+	var isSet int
+	for _, s := range sourceSelect {
+		if cctx.IsSet(s) {
+			isSet++
 		}
-		bg, tsk, err := getStateFromCar(ctx.Context, carLocation)
-		if err != nil {
-			return nil, lchtypes.EmptyTSK, err
-		}
-		return bg, tsk, nil
+	}
+	if isSet == 0 && cctx.Bool("trust-chainlove") {
+		isSet++
+		cctx.Set("rpc-endpoint", "https://api.chain.love/")
 	}
 
-	var tsk lchtypes.TipSetKey
+	if isSet != 1 {
+		return nil, nil, xerrors.Errorf("you must specify exactly one of: %s", strings.Join(sourceSelect, ", "))
+	}
 
-	if tsSet {
-		if clSet {
-			return nil, lchtypes.EmptyTSK, fmt.Errorf("choose only one of CAR, tipset-cids, or trust-chainlove")
+	ctx := cctx.Context
+	var err error
+	var bg *blockGetter
+	var tsk *fil.LotusTSK
+	var ts *fil.LotusTS
+
+	if cctx.IsSet("car") {
+
+		bg, tsk, err = getStateFromCar(ctx, cctx.String("car"))
+		if err != nil {
+			return nil, nil, cmn.WrErr(err)
 		}
-		cidStrs := ctx.StringSlice("tipset-cids")
+
+	} else if cctx.IsSet("tipset-cids") {
+
+		cidStrs := cctx.StringSlice("tipset-cids")
 		var cids []cid.Cid
 		for _, s := range cidStrs {
 			c, err := cid.Decode(s)
 			if err != nil {
-				return nil, lchtypes.EmptyTSK, err
+				return nil, nil, cmn.WrErr(err)
 			}
 			cids = append(cids, c)
 		}
-		tsk = lchtypes.NewTipSetKey(cids...)
-	}
+		ntsk := lchtypes.NewTipSetKey(cids...)
+		tsk = &ntsk
 
-	if clSet {
-		addr := "api.chain.love"
-		var api lotusapi.FullNodeStruct
-		closer, err := jsonrpc.NewMergeClient(context.Background(), "ws://"+addr+"/rpc/v0", "Filecoin", []interface{}{&api.Internal, &api.CommonStruct.Internal}, nil)
+	} else {
+
+		lApi, apiCloser, err := fil.NewLotusDaemonAPIClientV0(ctx, cctx.String("rpc-endpoint"), 0, "")
 		if err != nil {
-			log.Fatalf("connecting with lotus API failed: %s", err)
+			return nil, nil, cmn.WrErr(err)
 		}
-		defer closer()
+		defer apiCloser()
 
-		chainHeightTwoHoursAgo := (time.Now().Add(-2*time.Hour).Unix() - 1598306400) / 30
-		tipset, err := api.ChainGetTipSetByHeight(ctx.Context, filabi.ChainEpoch(chainHeightTwoHoursAgo), lchtypes.TipSetKey{})
+		ts, err = fil.GetTipset(ctx, lApi, filabi.ChainEpoch(cctx.Uint("lookback-epochs")))
 		if err != nil {
-			log.Fatalf("could not get chain tipset from height %d: %s", chainHeightTwoHoursAgo, err)
+			return nil, nil, cmn.WrErr(err)
 		}
-		fmt.Printf("using chainheight %d, with reported tipset %s\n", chainHeightTwoHoursAgo, tipset)
-		tsk = tipset.Key()
 	}
 
-	bg, err := initBitswapGetter(ctx.Context)
-	if err != nil {
-		return nil, lchtypes.EmptyTSK, err
+	if bg == nil {
+		bg, err = initBitswapGetter(ctx)
+		if err != nil {
+			return nil, nil, cmn.WrErr(err)
+		}
 	}
 
-	return bg, tsk, nil
+	if ts == nil {
+		blkData, err := loadBlockData(ctx, bg, tsk.Cids())
+		if err != nil {
+			return nil, nil, cmn.WrErr(err)
+		}
+
+		hdrs := make([]*lchtypes.BlockHeader, len(blkData))
+		for i := range blkData {
+			hdrs[i], err = lchtypes.DecodeBlock(blkData[i])
+			if err != nil {
+				return nil, nil, cmn.WrErr(err)
+			}
+		}
+
+		ts, err = lchtypes.NewTipSet(hdrs)
+		if err != nil {
+			return nil, nil, cmn.WrErr(err)
+		}
+	}
+
+	log.Printf("gathering results from StateRoot %s referenced by tipset at height %d (%s) %s\n", ts.ParentState(), ts.Height(), fil.ClockMainnet.EpochToTime(ts.Height()), ts.Cids())
+
+	return bg, ts, nil
 }
