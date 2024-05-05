@@ -14,7 +14,6 @@ import (
 	"github.com/filecoin-project/lotus/chain/types"
 	"github.com/ipfs/go-cid"
 	bstore "github.com/ipfs/go-ipfs-blockstore"
-
 	"github.com/urfave/cli/v2"
 )
 
