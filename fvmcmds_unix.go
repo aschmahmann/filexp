@@ -19,10 +19,10 @@ import (
 
 	"github.com/filecoin-project/go-jsonrpc"
 	"github.com/filecoin-project/go-state-types/abi"
-	lotusapi "github.com/filecoin-project/lotus/api"
 	lchstmgr "github.com/filecoin-project/lotus/chain/stmgr"
 	lchtypes "github.com/filecoin-project/lotus/chain/types"
 	"github.com/filecoin-project/lotus/chain/types/ethtypes"
+	"github.com/ribasushi/go-toolbox-interplanetary/fil"
 )
 
 func cmdFevmExec(ctx *cli.Context) error {
@@ -36,16 +36,7 @@ func cmdFevmExec(ctx *cli.Context) error {
 		return xerrors.Errorf("could not decode hex bytes: %w", err)
 	}
 
-	bs, tsk, err := getState(ctx)
-	if err != nil {
-		return err
-	}
-
-	sm, err := newFilStateReader(bs)
-	if err != nil {
-		return err
-	}
-	ts, err := sm.ChainStore().GetTipSetFromKey(ctx.Context, tsk)
+	bs, ts, err := getAnchorPoint(ctx)
 	if err != nil {
 		return err
 	}
@@ -53,8 +44,9 @@ func cmdFevmExec(ctx *cli.Context) error {
 	return fevmExec(ctx.Context, bs, ts, &eaddr, decodedBytes, ctx.Path("output"))
 }
 
-func cmdFevmDaemon(ctx *cli.Context) error {
-	args := ctx.Args()
+func cmdFevmDaemon(cctx *cli.Context) error {
+	args := cctx.Args()
+	ctx := cctx.Context
 	listenStr := "127.0.0.1:"
 	if args.Len() != 0 {
 		listenStr += args.First()
@@ -65,24 +57,31 @@ func cmdFevmDaemon(ctx *cli.Context) error {
 		return err
 	}
 
-	bg, tsk, err := getState(ctx)
+	bg, ts, err := getAnchorPoint(cctx)
 	if err != nil {
 		return err
 	}
 
-	addr := "api.chain.love"
-	var api lotusapi.FullNodeStruct
-	closer, err := jsonrpc.NewMergeClient(ctx.Context, "ws://"+addr+"/rpc/v0", "Filecoin", []interface{}{&api.Internal, &api.CommonStruct.Internal}, nil)
-	if err != nil {
-		return fmt.Errorf("connecting with lotus API failed: %w", err)
+	var api fil.LotusDaemonAPIClientV0
+
+	var rpcURL string
+	if cctx.Bool("trust-chainlove") {
+		rpcURL = chainLoveURL
 	}
-	defer closer()
+	if customRPC := cctx.String("rpc-endpoint"); customRPC != "" {
+		rpcURL = customRPC
+	}
+
+	if rpcURL != "" {
+		var apiCloser jsonrpc.ClientCloser
+		api, apiCloser, err = fil.NewLotusDaemonAPIClientV0(ctx, rpcURL, 0, "")
+		if err != nil {
+			return err
+		}
+		defer apiCloser()
+	}
 
 	sm, err := newFilStateReader(bg)
-	if err != nil {
-		return err
-	}
-	ts, err := sm.ChainStore().GetTipSetFromKey(ctx.Context, tsk)
 	if err != nil {
 		return err
 	}
@@ -141,7 +140,7 @@ func cmdFevmDaemon(ctx *cli.Context) error {
 		eaddr := *reqMsg.Params.To
 		methodData := reqMsg.Params.Data
 
-		ret, err := erpc.Call(ctx.Context, eaddr, methodData)
+		ret, err := erpc.Call(ctx, eaddr, methodData)
 		if err != nil {
 			writer.WriteHeader(http.StatusInternalServerError)
 			_, _ = writer.Write([]byte(fmt.Errorf("could not perform call operation: %w", err).Error()))
@@ -179,7 +178,7 @@ type ethRpcResolver struct {
 	ts           *lchtypes.TipSet
 	tsMx         sync.RWMutex
 	lastTskCheck time.Time
-	api          lotusapi.FullNodeStruct
+	api          fil.LotusDaemonAPIClientV0
 }
 
 func (e *ethRpcResolver) Call(ctx context.Context, eaddr ethtypes.EthAddress, methodData ethtypes.EthBytes) ([]byte, error) {
@@ -191,7 +190,7 @@ func (e *ethRpcResolver) Call(ctx context.Context, eaddr ethtypes.EthAddress, me
 	callTS := e.ts
 	e.tsMx.RUnlock()
 
-	if updateTsk {
+	if updateTsk && e.api != nil {
 		e.tsMx.Lock()
 		if time.Since(e.lastTskCheck) > time.Second*30 {
 			ts, err := e.api.ChainHead(ctx)

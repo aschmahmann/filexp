@@ -34,15 +34,10 @@ import (
 
 var hamtOptions = append(filadt.DefaultHamtOptions, hamt.UseTreeBitWidth(filbuiltin.DefaultHamtBitwidth))
 
-func getCoins(ctx context.Context, bg *blockGetter, tsk lchtypes.TipSetKey, addr filaddr.Address) (defErr error) {
+func getCoins(ctx context.Context, bg *blockGetter, ts *lchtypes.TipSet, addr filaddr.Address) error {
 	sm, err := newFilStateReader(bg)
 	if err != nil {
 		return xerrors.Errorf("unable to initialize a StateManager: %w", err)
-	}
-
-	ts, err := sm.ChainStore().GetTipSetFromKey(ctx, tsk)
-	if err != nil {
-		return xerrors.Errorf("unable to load target tipset: %w", err)
 	}
 
 	foundAttoFil := filabi.NewTokenAmount(0)
@@ -52,7 +47,7 @@ func getCoins(ctx context.Context, bg *blockGetter, tsk lchtypes.TipSetKey, addr
 
 	fmt.Printf("total attofil: %s\n", foundAttoFil)
 	bg.PrintStats()
-	return
+	return nil
 }
 
 func parseActors(ctx context.Context, sm *lchstmgr.StateManager, ts *lchtypes.TipSet, rootAddr filaddr.Address, foundAttoFil filabi.TokenAmount) error {
@@ -138,15 +133,10 @@ func parseActors(ctx context.Context, sm *lchstmgr.StateManager, ts *lchtypes.Ti
 	})
 }
 
-func getActors(ctx context.Context, bg *blockGetter, tsk lchtypes.TipSetKey, countOnly bool) error {
+func getActors(ctx context.Context, bg *blockGetter, ts *lchtypes.TipSet, countOnly bool) error {
 	sm, err := newFilStateReader(bg)
 	if err != nil {
 		return xerrors.Errorf("unable to initialize a StateManager: %w", err)
-	}
-
-	ts, err := sm.ChainStore().GetTipSetFromKey(ctx, tsk)
-	if err != nil {
-		return xerrors.Errorf("unable to load target tipset: %w", err)
 	}
 
 	var numActors uint64
@@ -195,15 +185,10 @@ func getActors(ctx context.Context, bg *blockGetter, tsk lchtypes.TipSetKey, cou
 	return nil
 }
 
-func getBalance(ctx context.Context, bg *blockGetter, tsk lchtypes.TipSetKey, addr filaddr.Address) error {
+func getBalance(ctx context.Context, bg *blockGetter, ts *lchtypes.TipSet, addr filaddr.Address) error {
 	sm, err := newFilStateReader(bg)
 	if err != nil {
 		return xerrors.Errorf("unable to initialize a StateManager: %w", err)
-	}
-
-	ts, err := sm.ChainStore().GetTipSetFromKey(ctx, tsk)
-	if err != nil {
-		return xerrors.Errorf("unable to load target tipset: %w", err)
 	}
 
 	stateTree, err := sm.StateTree(ts.ParentState())
