@@ -10,15 +10,15 @@ import (
 	"github.com/hashicorp/go-multierror"
 	bsclient "github.com/ipfs/boxo/bitswap/client"
 	bsnet "github.com/ipfs/boxo/bitswap/network"
-	blocks "github.com/ipfs/go-block-format"
+	"github.com/ipfs/boxo/blockstore"
+	"github.com/ipfs/boxo/exchange"
+	"github.com/ipfs/boxo/ipns"
+	"github.com/ipfs/boxo/verifcid"
+	blkfmt "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
 	"github.com/ipfs/go-datastore"
 	leveldb "github.com/ipfs/go-ds-leveldb"
-	blockstore "github.com/ipfs/go-ipfs-blockstore"
-	exchange "github.com/ipfs/go-ipfs-exchange-interface"
-	ipld "github.com/ipfs/go-ipld-format"
-	"github.com/ipfs/go-ipns"
-	"github.com/ipfs/go-verifcid"
+	ipldfmt "github.com/ipfs/go-ipld-format"
 	"github.com/libp2p/go-libp2p"
 	dht "github.com/libp2p/go-libp2p-kad-dht"
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
@@ -49,10 +49,6 @@ func setupFilContentFetching(h host.Host, ctx context.Context) (*bsclient.Client
 	}
 
 	return bs, nil
-}
-
-type hasHost interface {
-	Host() host.Host
 }
 
 func setupPubSub(ctx context.Context, h host.Host) error {
@@ -129,7 +125,7 @@ func setupPubSub(ctx context.Context, h host.Host) error {
 	}
 }
 
-func getStateDynamicallyLoadedFromBitswap(ctx context.Context) (blockstore.Blockstore, error) {
+func initBitswapGetter(ctx context.Context) (blockstore.Blockstore, error) {
 	start := time.Now()
 	defer func() {
 		fmt.Printf("duration to setup bitswap fetching: %v\n", time.Since(start))
@@ -208,7 +204,7 @@ type combineFetcher struct {
 	first, second                   exchange.Fetcher
 }
 
-func (f *combineFetcher) GetBlock(ctx context.Context, c cid.Cid) (blocks.Block, error) {
+func (f *combineFetcher) GetBlock(ctx context.Context, c cid.Cid) (blkfmt.Block, error) {
 	subCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	firstCh, firstErr := f.first.GetBlocks(subCtx, []cid.Cid{c})
@@ -227,7 +223,7 @@ func (f *combineFetcher) GetBlock(ctx context.Context, c cid.Cid) (blocks.Block,
 		return blk, nil
 	}
 
-	var blk blocks.Block
+	var blk blkfmt.Block
 	select {
 	case blk = <-firstCh:
 		atomic.AddUint64(&f.numFirstBlocks, 1)
@@ -245,7 +241,7 @@ func (f *combineFetcher) GetBlock(ctx context.Context, c cid.Cid) (blocks.Block,
 	return blk, nil
 }
 
-func (f *combineFetcher) GetBlocks(ctx context.Context, cids []cid.Cid) (<-chan blocks.Block, error) {
+func (f *combineFetcher) GetBlocks(ctx context.Context, cids []cid.Cid) (<-chan blkfmt.Block, error) {
 	//TODO implement me
 	panic("implement me")
 }
@@ -258,9 +254,9 @@ type bservBstoreWrapper struct {
 	bserv exchange.Fetcher
 }
 
-func (b *bservBstoreWrapper) Get(ctx context.Context, c cid.Cid) (blocks.Block, error) {
-	err := verifcid.ValidateCid(c) // hash security
-	if err != nil {
+func (b *bservBstoreWrapper) Get(ctx context.Context, c cid.Cid) (blkfmt.Block, error) {
+	// hash security
+	if err := verifcid.ValidateCid(verifcid.DefaultAllowlist, c); err != nil {
 		return nil, err
 	}
 
@@ -269,7 +265,7 @@ func (b *bservBstoreWrapper) Get(ctx context.Context, c cid.Cid) (blocks.Block, 
 		return block, nil
 	}
 
-	if ipld.IsNotFound(err) {
+	if ipldfmt.IsNotFound(err) {
 		// TODO be careful checking ErrNotFound. If the underlying
 		// implementation changes, this will break.
 		blk, err := b.bserv.GetBlock(ctx, c)
@@ -292,7 +288,7 @@ func (b *bservBstoreWrapper) GetSize(ctx context.Context, c cid.Cid) (int, error
 	if has {
 		return b.Blockstore.GetSize(ctx, c)
 	}
-	if !ipld.IsNotFound(err) {
+	if !ipldfmt.IsNotFound(err) {
 		// TODO be careful checking ErrNotFound. If the underlying
 		// implementation changes, this will break.
 		return 0, err
