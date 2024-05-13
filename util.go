@@ -8,12 +8,9 @@ import (
 	"sync"
 	"time"
 
-	lchstmgr "github.com/filecoin-project/lotus/chain/stmgr"
-	lchstore "github.com/filecoin-project/lotus/chain/store"
 	lchtypes "github.com/filecoin-project/lotus/chain/types"
 	blkfmt "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
-	ds "github.com/ipfs/go-datastore"
 	ipldcbor "github.com/ipfs/go-ipld-cbor"
 	"github.com/ipld/go-car/v2"
 	carbs "github.com/ipld/go-car/v2/blockstore"
@@ -22,25 +19,6 @@ import (
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/xerrors"
 )
-
-func newFilStateReader(bsrc ipldcbor.IpldBlockstore) (*lchstmgr.StateManager, error) {
-	ebs := NewEphemeralBlockstore(bsrc)
-	return lchstmgr.NewStateManager(
-		lchstore.NewChainStore(
-			ebs,
-			ebs,
-			ds.NewMapDatastore(),
-			nil,
-			nil,
-		),
-		nil,
-		nil,
-		nil,
-		nil,
-		nil,
-		nil,
-	)
-}
 
 func loadBlockData(ctx context.Context, bg *blockGetter, cids []cid.Cid) ([][]byte, error) {
 	blks := make([][]byte, len(cids))

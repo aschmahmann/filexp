@@ -16,7 +16,7 @@ import (
 	filstore "github.com/filecoin-project/go-state-types/store"
 	lbi "github.com/filecoin-project/lotus/chain/actors/builtin"
 	lbimsig "github.com/filecoin-project/lotus/chain/actors/builtin/multisig"
-	lchstmgr "github.com/filecoin-project/lotus/chain/stmgr"
+	lchstate "github.com/filecoin-project/lotus/chain/state"
 	lchtypes "github.com/filecoin-project/lotus/chain/types"
 	ipldcbor "github.com/ipfs/go-ipld-cbor"
 	"github.com/ribasushi/go-toolbox-interplanetary/fil"
@@ -27,13 +27,8 @@ import (
 var hamtOptions = append(filadt.DefaultHamtOptions, hamt.UseTreeBitWidth(filbuiltin.DefaultHamtBitwidth))
 
 func getCoins(ctx context.Context, bg *blockGetter, ts *fil.LotusTS, addr filaddr.Address) error {
-	sm, err := newFilStateReader(bg)
-	if err != nil {
-		return xerrors.Errorf("unable to initialize a StateManager: %w", err)
-	}
-
 	foundAttoFil := filabi.NewTokenAmount(0)
-	if err := parseActors(ctx, sm, ts, addr, foundAttoFil); err != nil {
+	if err := parseActors(ctx, bg, ts, addr, foundAttoFil); err != nil {
 		return err
 	}
 
@@ -42,12 +37,13 @@ func getCoins(ctx context.Context, bg *blockGetter, ts *fil.LotusTS, addr filadd
 	return nil
 }
 
-func parseActors(ctx context.Context, sm *lchstmgr.StateManager, ts *lchtypes.TipSet, rootAddr filaddr.Address, foundAttoFil filabi.TokenAmount) error {
-	ast := filstore.WrapStore(ctx, ipldcbor.NewCborStore(sm.ChainStore().UnionStore()))
+func parseActors(ctx context.Context, bg *blockGetter, ts *lchtypes.TipSet, rootAddr filaddr.Address, foundAttoFil filabi.TokenAmount) error {
+	ast := filstore.WrapStore(ctx, ipldcbor.NewCborStore(bg))
 	getManyAst := &getManyCborStore{
-		BasicIpldStore: ipldcbor.NewCborStore(sm.ChainStore().StateBlockstore())}
+		BasicIpldStore: ipldcbor.NewCborStore(bg),
+	}
 
-	stateTree, err := sm.StateTree(ts.ParentState())
+	stateTree, err := lchstate.LoadStateTree(ipldcbor.NewCborStore(bg), ts.ParentState())
 	if err != nil {
 		return err
 	}
@@ -126,16 +122,12 @@ func parseActors(ctx context.Context, sm *lchstmgr.StateManager, ts *lchtypes.Ti
 }
 
 func getActors(ctx context.Context, bg *blockGetter, ts *fil.LotusTS, countOnly bool) error {
-	sm, err := newFilStateReader(bg)
-	if err != nil {
-		return xerrors.Errorf("unable to initialize a StateManager: %w", err)
-	}
-
 	var numActors uint64
 
-	ast := filstore.WrapStore(ctx, ipldcbor.NewCborStore(sm.ChainStore().UnionStore()))
+	ast := filstore.WrapStore(ctx, ipldcbor.NewCborStore(bg))
 	getManyAst := &getManyCborStore{
-		BasicIpldStore: ipldcbor.NewCborStore(sm.ChainStore().StateBlockstore())}
+		BasicIpldStore: ipldcbor.NewCborStore(bg),
+	}
 
 	var root lchtypes.StateRoot
 	// Try loading as a new-style state-tree (version/actors tuple).
@@ -178,12 +170,7 @@ func getActors(ctx context.Context, bg *blockGetter, ts *fil.LotusTS, countOnly 
 }
 
 func getBalance(ctx context.Context, bg *blockGetter, ts *fil.LotusTS, addr filaddr.Address) error {
-	sm, err := newFilStateReader(bg)
-	if err != nil {
-		return xerrors.Errorf("unable to initialize a StateManager: %w", err)
-	}
-
-	stateTree, err := sm.StateTree(ts.ParentState())
+	stateTree, err := lchstate.LoadStateTree(ipldcbor.NewCborStore(bg), ts.ParentState())
 	if err != nil {
 		return err
 	}
