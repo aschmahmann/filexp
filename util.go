@@ -8,17 +8,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/filecoin-project/lotus/chain/consensus"
-	"github.com/filecoin-project/lotus/chain/consensus/filcns"
-	"github.com/filecoin-project/lotus/chain/stmgr"
-	chainstore "github.com/filecoin-project/lotus/chain/store"
 	lchtypes "github.com/filecoin-project/lotus/chain/types"
-	"github.com/filecoin-project/lotus/chain/vm"
-	"github.com/filecoin-project/lotus/cmd/lotus-sim/simulation/mock"
 	blkfmt "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
-	ds "github.com/ipfs/go-datastore"
-	dssync "github.com/ipfs/go-datastore/sync"
 	ipldcbor "github.com/ipfs/go-ipld-cbor"
 	"github.com/ipld/go-car/v2"
 	carbs "github.com/ipld/go-car/v2/blockstore"
@@ -26,34 +18,6 @@ import (
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/xerrors"
 )
-
-func newFilStateReader(bsrc ipldcbor.IpldBlockstore) (*stmgr.StateManager, error) {
-	ebs := NewEphemeralBlockstore(bsrc)
-	mds := dssync.MutexWrap(ds.NewMapDatastore())
-	c := cid.MustParse("bafy2bzacecnamqgqmifpluoeldx7zzglxcljo6oja4vrmtj7432rphldpdmm2")
-	err := mds.Put(context.TODO(), ds.NewKey("0"), c.Bytes())
-	if err != nil {
-		return nil, err
-	}
-
-	cs := chainstore.NewChainStore(
-		ebs,
-		ebs,
-		mds,
-		nil,
-		nil,
-	)
-
-	return stmgr.NewStateManager(
-		cs,
-		consensus.NewTipSetExecutor(filcns.RewardFunc),
-		vm.Syscalls(mock.Verifier),
-		filcns.DefaultUpgradeSchedule(),
-		nil,
-		mds,
-		nil,
-	)
-}
 
 func loadBlockData(ctx context.Context, bg *blockGetter, cids []cid.Cid) ([][]byte, error) {
 	blks := make([][]byte, len(cids))

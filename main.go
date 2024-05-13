@@ -100,7 +100,7 @@ func main() {
 			},
 			{
 				Name:        "fevm-exec",
-				Description: "Execute a read-only FVM actor. Either pass a state CAR, tipset CIDs, or trust chain.love for a recent time",
+				Description: "Execute a read-only FVM actor",
 				Usage:       "<eth-addr> <eth-data>",
 				Flags: append(append([]cli.Flag{}, stateFlags...),
 					&cli.PathFlag{
@@ -111,7 +111,7 @@ func main() {
 			},
 			{
 				Name:        "fevm-daemon",
-				Description: "Start a daemon that will respond to Ethereum JSON RPC calls. Either pass a state CAR, tipset CIDs, or trust chain.love for a recent time",
+				Description: "Start a daemon that will respond to Ethereum JSON RPC calls. Note: passing an RPC endpoint enables real-time updates and lookback-epochs is not supported",
 				Usage:       "[port]",
 				Flags:       append([]cli.Flag{}, stateFlags...),
 				Action:      cmdFevmDaemon,
