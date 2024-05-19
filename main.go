@@ -63,6 +63,33 @@ func main() {
 		Usage: "explore filecoin state",
 		Commands: []*cli.Command{
 			{
+				Name:        "get-balance",
+				Usage:       "<actor>",
+				Description: "Get the balance for a given actor",
+				Flags:       append([]cli.Flag{}, stateFlags...),
+				Action: func(cctx *cli.Context) error {
+					actorAddr, err := filaddr.NewFromString(cctx.Args().Get(0))
+					if err != nil {
+						return err
+					}
+
+					bg, ts, err := getAnchorPoint(cctx)
+					if err != nil {
+						return err
+					}
+					defer bg.LogStats()
+
+					return getBalance(cctx.Context, bg, ts, actorAddr)
+				},
+			},
+			{
+				Name:        "fil-to-eth-address",
+				Usage:       "<fX....>",
+				Description: "Converts an fX address to a 0x one if possible",
+				Flags:       append([]cli.Flag{}, stateFlags...),
+				Action:      filToEthAddr,
+			},
+			{
 				Name:        "msig-coins",
 				Usage:       "<signer-address>",
 				Description: "Add up all of the coins controlled by multisigs with the given signer and signing threshold of 1",
@@ -100,32 +127,6 @@ func main() {
 
 					return getActors(cctx.Context, bg, ts, cctx.Bool("count-only"))
 				},
-			},
-			{
-				Name:        "get-balance",
-				Description: "Get the balance for a given actor",
-				Flags:       append([]cli.Flag{}, stateFlags...),
-				Action: func(cctx *cli.Context) error {
-					actorAddr, err := filaddr.NewFromString(cctx.Args().Get(0))
-					if err != nil {
-						return err
-					}
-
-					bg, ts, err := getAnchorPoint(cctx)
-					if err != nil {
-						return err
-					}
-					defer bg.LogStats()
-
-					return getBalance(cctx.Context, bg, ts, actorAddr)
-				},
-			},
-			{
-				Name:        "fil-to-eth-address",
-				Description: "Converts an fX address to a 0x one if possible",
-				Usage:       "<fX....>",
-				Flags:       append([]cli.Flag{}, stateFlags...),
-				Action:      filToEthAddr,
 			},
 			{
 				Name:        "fevm-exec",
