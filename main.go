@@ -160,6 +160,47 @@ func main() {
 				},
 			},
 			{
+				Name:        "dump-actorlist-sqlite",
+				Description: "Create sqlite database reflecting the states and relationships of all actors in current FilState",
+				Flags: append([]cli.Flag{
+					&cli.StringFlag{
+						Name:  "db-file",
+						Usage: "Output filename, defaults to ./<selected-height>_statedump.sqlite",
+					},
+				}, stateFlags...),
+				Action: func(cctx *cli.Context) (defErr error) {
+					bg, ts, err := getAnchorPoint(cctx)
+					if err != nil {
+						return err
+					}
+
+					fn := cctx.String("db-file")
+					if fn == "" {
+						fn = fmt.Sprintf("%d_statedump.sqlite", ts.Height())
+					}
+
+					// ensure we get a fresh new file (O_EXCL|O_CREATE )
+					fh, err := os.OpenFile(fn, os.O_EXCL|os.O_CREATE|os.O_RDWR, 0644)
+					if err != nil {
+						return err
+					}
+					defer func() {
+						err := fh.Close()
+						if err != nil {
+							log.Errorf("closing/flushing %s failed: %s", fn, err)
+						}
+						if defErr == nil && err == nil {
+							log.Infof("state dump complete, to explore run:\n\n\tsqlite3 -header -column %s\n", fn)
+						}
+
+					}()
+
+					// use an FD instead of a filehandle to cleanly enable future things like
+					// https://pkg.go.dev/github.com/tmthrgd/tmpfile
+					return state.DumpActorStateSQLite(cctx.Context, bg, ts, fh.Fd(), false)
+				},
+			},
+			{
 				Name:        "fevm-exec",
 				Description: "Execute a read-only FVM actor",
 				Usage:       "<eth-addr> <eth-data>",
@@ -196,7 +237,7 @@ func main() {
 		// wait
 		s := <-sigs
 
-		log.Warnf("process received %s, cleaning up...", decodeSigname(s))
+		log.Warnf("process received %s, cleaning up...", filexp.DecodeSigname(s))
 
 		topCtxShutdown()
 	}()

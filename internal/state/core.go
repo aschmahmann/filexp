@@ -3,15 +3,21 @@ package state
 import (
 	"bytes"
 	"context"
+	"reflect"
+	"strings"
 
+	filexp "github.com/aschmahmann/filexp/internal"
 	"github.com/aschmahmann/filexp/internal/ipld"
 	filaddr "github.com/filecoin-project/go-address"
 	filstore "github.com/filecoin-project/go-state-types/store"
 	lchstate "github.com/filecoin-project/lotus/chain/state"
 	lchtypes "github.com/filecoin-project/lotus/chain/types"
+	"github.com/ipfs/go-cid"
 	ipldcbor "github.com/ipfs/go-ipld-cbor"
 	"golang.org/x/xerrors"
 )
+
+var log = filexp.Logger
 
 func GetActorGeneric(cbs ipldcbor.IpldStore, ts *lchtypes.TipSet, addr filaddr.Address) (*lchtypes.Actor, error) {
 	st, err := lchstate.LoadStateTree(cbs, ts.ParentState())
@@ -60,4 +66,30 @@ func IterateActors(ctx context.Context, cbs ipldcbor.IpldStore, ts *lchtypes.Tip
 
 		return cb(id, act)
 	})
+}
+
+type actorState interface {
+	GetState() interface{}
+}
+
+// all actors mask the Cid slot with a method that returns an unwieldy thing in its place
+// some distant day every actor state will have ForEachParallel(), but this is not today
+func cidFromStateByFieldpath(as actorState, fieldPath ...string) (cid.Cid, error) {
+	s := as.GetState()
+	v := reflect.ValueOf(s)
+
+	for _, p := range fieldPath {
+		if v.Kind() == reflect.Pointer {
+			v = v.Elem()
+		}
+		v = v.FieldByName(p)
+		if !v.IsValid() {
+			return cid.Undef, xerrors.Errorf("struct %+v, does not seem to contain a fieldPath '%s'", as, strings.Join(fieldPath, "."))
+		}
+	}
+	c, didCast := v.Interface().(cid.Cid)
+	if !didCast {
+		return cid.Undef, xerrors.Errorf("struct %+v, fieldPath '%s' does not contain a cid.Cid", as, strings.Join(fieldPath, "."))
+	}
+	return c, nil
 }
