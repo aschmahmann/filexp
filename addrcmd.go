@@ -35,6 +35,7 @@ func filToEthAddr(cctx *cli.Context) error {
 	if err != nil {
 		return err
 	}
+	defer bg.LogStats()
 
 	stateTree, err := lchstate.LoadStateTree(ipldcbor.NewCborStore(bg), ts.ParentState())
 	if err != nil {
@@ -52,6 +53,5 @@ func filToEthAddr(cctx *cli.Context) error {
 	eaddr := ethtypes.EthAddressFromActorID(abi.ActorID(id))
 
 	fmt.Println(eaddr.String())
-	bg.PrintStats()
 	return nil
 }

@@ -1,7 +1,7 @@
 package main
 
 import (
-	"log"
+	"fmt"
 	"os"
 	"strings"
 
@@ -9,10 +9,13 @@ import (
 	filabi "github.com/filecoin-project/go-state-types/abi"
 	lchtypes "github.com/filecoin-project/lotus/chain/types"
 	"github.com/ipfs/go-cid"
+	logging "github.com/ipfs/go-log/v2"
 	"github.com/ribasushi/go-toolbox-interplanetary/fil"
 	"github.com/urfave/cli/v2"
 	"golang.org/x/xerrors"
 )
+
+var log = logging.Logger(fmt.Sprintf("%s(%d)", "filexp", os.Getpid()))
 
 var stateFlags = []cli.Flag{
 	&cli.PathFlag{
@@ -40,6 +43,12 @@ var stateFlags = []cli.Flag{
 }
 
 func main() {
+	logging.SetLogLevel("*", "INFO")
+	// the network stack is incredibly chatty: silence it all
+	for _, c := range []string{"bitswap", "dht", "dht/RtRefreshManager", "routing/http/contentrouter", "net/identify", "bs:sess", "bitswap_network", "bitswap-client", "connmgr", "canonical-log"} {
+		logging.SetLogLevel(c, "ERROR")
+	}
+
 	app := &cli.App{
 		Name:  "filexp",
 		Usage: "explore filecoin state",
@@ -58,6 +67,7 @@ func main() {
 					if err != nil {
 						return err
 					}
+					defer bg.LogStats()
 
 					return getCoins(cctx.Context, bg, ts, signerAddr)
 				},
@@ -77,6 +87,8 @@ func main() {
 					if err != nil {
 						return err
 					}
+					defer bg.LogStats()
+
 					return getActors(cctx.Context, bg, ts, cctx.Bool("count-only"))
 				},
 			},
@@ -94,6 +106,7 @@ func main() {
 					if err != nil {
 						return err
 					}
+					defer bg.LogStats()
 
 					return getBalance(cctx.Context, bg, ts, actorAddr)
 				},
@@ -216,7 +229,7 @@ func getAnchorPoint(cctx *cli.Context) (*blockGetter, *lchtypes.TipSet, error) {
 		}
 	}
 
-	log.Printf("gathering results from StateRoot %s referenced by tipset at height %d (%s) %s\n", ts.ParentState(), ts.Height(), fil.ClockMainnet.EpochToTime(ts.Height()), ts.Cids())
+	log.Infof("gathering results from StateRoot %s referenced by tipset at height %d (%s) %s", ts.ParentState(), ts.Height(), fil.ClockMainnet.EpochToTime(ts.Height()), ts.Cids())
 
 	return bg, ts, nil
 }

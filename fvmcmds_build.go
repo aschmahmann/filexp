@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"sync"
@@ -55,6 +54,7 @@ func cmdFevmExec(cctx *cli.Context) error {
 	if err != nil {
 		return err
 	}
+	defer bg.LogStats()
 
 	return fevmExec(cctx.Context, bg, ts, &eaddr, decodedBytes, cctx.Path("output"))
 }
@@ -76,6 +76,7 @@ func cmdFevmDaemon(cctx *cli.Context) error {
 	if err != nil {
 		return err
 	}
+	defer bg.LogStats()
 
 	var api fil.LotusDaemonAPIClientV0
 
@@ -210,7 +211,7 @@ func (e *ethRpcResolver) Call(ctx context.Context, eaddr ethtypes.EthAddress, me
 		if time.Since(e.lastTskCheck) > time.Second*30 {
 			ts, err := e.api.ChainHead(ctx)
 			if err != nil {
-				log.Printf("could not update tipset %s", err.Error())
+				log.Errorf("could not update tipset %s", err.Error())
 			} else {
 				e.lastTskCheck = time.Now()
 				e.ts = ts
@@ -243,7 +244,7 @@ func fevmExec(ctx context.Context, bg *blockGetter, ts *lchtypes.TipSet, eaddr *
 	if err != nil {
 		return err
 	}
-	fmt.Printf("epoch %s\n", ts.Height())
+	log.Infof("epoch %s", ts.Height())
 
 	sm, err := newFilStateReader(bg)
 	if err != nil {
@@ -255,7 +256,7 @@ func fevmExec(ctx context.Context, bg *blockGetter, ts *lchtypes.TipSet, eaddr *
 		return xerrors.Errorf("could not load actor the message is from: %w", err)
 	}
 	actorStateRoot := act.Head
-	fmt.Printf("actor state root: %s\n", actorStateRoot)
+	log.Infof("actor state root: %s", actorStateRoot)
 
 	_, err = bg.Get(ctx, actorStateRoot)
 	if err != nil {
@@ -263,7 +264,7 @@ func fevmExec(ctx context.Context, bg *blockGetter, ts *lchtypes.TipSet, eaddr *
 	}
 
 	for _, c := range bg.orderedCids {
-		fmt.Printf("pre-call cid: %s\n", c)
+		log.Infof("pre-call cid: %s", c)
 	}
 
 	res, err := sm.Call(ctx, filMsg, ts)
@@ -278,8 +279,6 @@ func fevmExec(ctx context.Context, bg *blockGetter, ts *lchtypes.TipSet, eaddr *
 	}
 
 	fmt.Println(string(str))
-
-	bg.PrintStats()
 
 	cidsInOrder := bg.orderedCids
 	if err != nil {
