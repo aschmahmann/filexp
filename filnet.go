@@ -124,7 +124,7 @@ func setupFilDHT(ctx context.Context, h host.Host) error {
 func initBitswapGetter(ctx context.Context) (*blockGetter, error) {
 	start := time.Now()
 	defer func() {
-		fmt.Printf("duration to setup bitswap fetching: %v\n", time.Since(start))
+		log.Infof("duration to setup bitswap fetching: %v", time.Since(start))
 	}()
 
 	h, err := libp2p.New(libp2p.ResourceManager(&network.NullResourceManager{}))
@@ -190,11 +190,15 @@ func initBitswapGetter(ctx context.Context) (*blockGetter, error) {
 				nFilBlks := atomic.LoadUint64(&cf.numFirstBlocks)
 				nIpfsBlks := atomic.LoadUint64(&cf.numSecondBlocks)
 				bg.mx.Lock()
-				fmt.Printf("numPeers: %d, "+
-					"nPeersWithFilBitswap: %d, numWantsFil: %d, nblksFil: %d, "+
-					"nPeersWithIpfsBitswap: %d, numWantsIpfs: %d, nblksIpfs: %d \n"+
-					"numberOfBlocksLoaded: %d\n",
-					len(peers), nPeersWithFilBitswap, nwantsFil, nFilBlks, nPeersWithIpfsBitswap, nwantsIpfs, nIpfsBlks, len(bg.m),
+				log.Infow("netStats",
+					"peers", len(peers),
+					"peersFilBS", nPeersWithFilBitswap,
+					"wantsFilBS", nwantsFil,
+					"blksFromFilBS", nFilBlks,
+					"peersIpfsBS", nPeersWithIpfsBitswap,
+					"wantsIpfsBS", nwantsIpfs,
+					"blksFromIpfsBS", nIpfsBlks,
+					"blksTotal", len(bg.m),
 				)
 				bg.mx.Unlock()
 

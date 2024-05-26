@@ -34,7 +34,6 @@ func getCoins(ctx context.Context, bg *blockGetter, ts *lchtypes.TipSet, addr fi
 	}
 
 	fmt.Printf("total attofil: %s\n", foundAttoFil)
-	bg.PrintStats()
 	return nil
 }
 
@@ -166,7 +165,6 @@ func getActors(ctx context.Context, bg *blockGetter, ts *lchtypes.TipSet, countO
 	}
 
 	fmt.Printf("total actors found: %d\n", numActors)
-	bg.PrintStats()
 	return nil
 }
 
@@ -181,6 +179,5 @@ func getBalance(_ context.Context, bg *blockGetter, ts *lchtypes.TipSet, addr fi
 	}
 
 	fmt.Printf("total actor balance: %s\n", act.Balance)
-	bg.PrintStats()
 	return nil
 }

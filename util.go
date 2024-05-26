@@ -2,8 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
-	"log"
 	"os"
 	"sync"
 	"time"
@@ -45,16 +43,13 @@ func loadBlockData(ctx context.Context, bg *blockGetter, cids []cid.Cid) ([][]by
 
 func getStateFromCar(ctx context.Context, srcSnapshot string) (*blockGetter, lchtypes.TipSetKey, error) {
 	start := time.Now()
-	defer func() {
-		fmt.Printf("duration: %v\n", time.Since(start))
-	}()
 
 	carbs, err := blockstoreFromSnapshot(ctx, srcSnapshot)
 	if err != nil {
 		return nil, lchtypes.EmptyTSK, err
 	}
 
-	fmt.Printf("duration to load snapshot: %v\n", time.Since(start))
+	log.Infof("duration to load snapshot: %v", time.Since(start))
 
 	carRoots, err := carbs.Roots()
 	if err != nil {
@@ -84,7 +79,7 @@ func blockstoreFromSnapshot(_ context.Context, snapshotFilename string) (*carbs.
 			return nil, xerrors.Errorf("unable to create new index %s: %w", idxFile, err)
 		}
 
-		log.Printf("generating new index (slow!!!!) at %s", idxFile)
+		log.Infof("generating new index (slow!!!!) at %s", idxFile)
 		idx, err = car.GenerateIndex(carFh)
 		if err != nil {
 			return nil, xerrors.Errorf("car index generation failed: %w", err)
@@ -135,15 +130,14 @@ func (bg *blockGetter) Get(ctx context.Context, cid cid.Cid) (blkfmt.Block, erro
 	return blk, nil
 }
 
-func (bg *blockGetter) PrintStats() {
+func (bg *blockGetter) LogStats() {
 	bg.mx.Lock()
-	fmt.Printf("total blocks read: %d\n", len(bg.m))
 	totalSizeBytes := 0
 	for _, v := range bg.m {
 		totalSizeBytes += v
 	}
+	log.Infow("total blocks", "count", len(bg.m), "bytes", totalSizeBytes)
 	bg.mx.Unlock()
-	fmt.Printf("total blocks size: %d\n", totalSizeBytes)
 }
 
 var _ ipldcbor.IpldBlockstore = &blockGetter{}
