@@ -10,10 +10,10 @@ import (
 	bsnet "github.com/ipfs/boxo/bitswap/network"
 	"github.com/ipfs/go-datastore"
 	blockstore "github.com/ipfs/go-ipfs-blockstore"
-	nilrouting "github.com/ipfs/go-ipfs-routing/none"
 	"github.com/ipfs/go-ipns"
 	dht "github.com/libp2p/go-libp2p-kad-dht"
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
+	rhelpers "github.com/libp2p/go-libp2p-routing-helpers"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
 )
@@ -31,12 +31,8 @@ var boostrappers = []string{
 }
 
 func setupFilContentFetching(h host.Host, ctx context.Context) (*bsclient.Client, error) {
-	nr, err := nilrouting.ConstructNilRouting(ctx, nil, nil, nil)
-	if err != nil {
-		return nil, err
-	}
 	nullBS := blockstore.NewBlockstore(datastore.NewNullDatastore())
-	n := bsnet.NewFromIpfsHost(h, nr, bsnet.Prefix("/chain"))
+	n := bsnet.NewFromIpfsHost(h, rhelpers.Null{}, bsnet.Prefix("/chain"))
 	bs := bsclient.New(ctx, n, nullBS)
 	n.Start(bs)
 
