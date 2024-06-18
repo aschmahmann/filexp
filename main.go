@@ -99,6 +99,13 @@ func main() {
 				},
 			},
 			{
+				Name:        "fil-to-eth-address",
+				Description: "Converts an fX address to a 0x one if possible",
+				Usage:       "<fX....>",
+				Flags:       append([]cli.Flag{}, stateFlags...),
+				Action:      filToEthAddr,
+			},
+			{
 				Name:        "fevm-exec",
 				Description: "Execute a read-only FVM actor",
 				Usage:       "<eth-addr> <eth-data>",
