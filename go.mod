@@ -2,7 +2,11 @@ module github.com/aschmahmann/filexp
 
 go 1.21
 
-toolchain go1.22.3
+// replace pulls in https://github.com/filecoin-project/go-hamt-ipld/pull/103
+// there may be a better implementation in https://github.com/filecoin-project/go-hamt-ipld/pull/115
+replace github.com/filecoin-project/go-hamt-ipld/v3 => github.com/aschmahmann/go-hamt-ipld/v3 v3.0.0-20230117061543-a9b3d6bfd710
+
+replace github.com/filecoin-project/filecoin-ffi => ./extern/filecoin-ffi // provided via a git submodule
 
 require (
 	github.com/filecoin-project/go-address v1.1.0
@@ -241,7 +245,3 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	lukechampine.com/blake3 v1.3.0 // indirect
 )
-
-replace github.com/filecoin-project/go-hamt-ipld/v3 => github.com/aschmahmann/go-hamt-ipld/v3 v3.0.0-20230117061543-a9b3d6bfd710
-
-replace github.com/filecoin-project/filecoin-ffi => ./extern/filecoin-ffi
