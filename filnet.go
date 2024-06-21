@@ -58,23 +58,7 @@ func setupFilContentFetching(h host.Host, ctx context.Context) (*bsclient.Client
 		return nil, err
 	}
 
-	// wait until we have a certain number of peers before returning
-	// TODO: is this a useful optimization based on how the boxo/bitswap implementation currently works?
-	ticker := time.NewTicker(time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ticker.C:
-			if np := len(h.Network().Peers()); np > len(boostrappers)*2 {
-				return bs, nil
-			} else {
-				fmt.Printf("number of peers: %d\n", np)
-			}
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		}
-	}
+	return bs, nil
 }
 
 func setupFilBootstrapping(ctx context.Context, h host.Host) error {
