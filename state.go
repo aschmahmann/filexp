@@ -12,9 +12,9 @@ import (
 	filabi "github.com/filecoin-project/go-state-types/abi"
 	filbig "github.com/filecoin-project/go-state-types/big"
 	filbuiltin "github.com/filecoin-project/go-state-types/builtin"
+	_init13 "github.com/filecoin-project/go-state-types/builtin/v13/init"
 	filadt "github.com/filecoin-project/go-state-types/builtin/v13/util/adt"
 	filstore "github.com/filecoin-project/go-state-types/store"
-
 	lbi "github.com/filecoin-project/lotus/chain/actors/builtin"
 	lbimsig "github.com/filecoin-project/lotus/chain/actors/builtin/multisig"
 	lchstate "github.com/filecoin-project/lotus/chain/state"
@@ -170,6 +170,66 @@ func enumActors(ctx context.Context, bg *blockGetter, ts *lchtypes.TipSet, actor
 		}
 
 		if err := actorFunc(act, addr); err != nil {
+			return err
+		}
+
+		return nil
+	}); err != nil {
+		return err
+	}
+	return nil
+}
+
+func enumInit(ctx context.Context, bg *blockGetter, ts *lchtypes.TipSet, initFunc func(id int64, addr filaddr.Address) error) error {
+	ast := filstore.WrapStore(ctx, ipldcbor.NewCborStore(bg))
+	getManyAst := &getManyCborStore{
+		BasicIpldStore: ipldcbor.NewCborStore(bg),
+	}
+
+	var root lchtypes.StateRoot
+	// Try loading as a new-style state-tree (version/actors tuple).
+	if err := ast.Get(ctx, ts.ParentState(), &root); err != nil {
+		return err
+	}
+
+	stateTree, err := lchstate.LoadStateTree(ipldcbor.NewCborStore(bg), ts.ParentState())
+	if err != nil {
+		return err
+	}
+
+	initActor, err := stateTree.GetActor(filbuiltin.InitActorAddr)
+	if err != nil {
+		return err
+	}
+
+	var initRoot _init13.State
+	// Try loading as a new-style state-tree (version/actors tuple).
+	if err := ast.Get(ctx, initActor.Head, &initRoot); err != nil {
+		return err
+	}
+
+	initHamt, err := hamt.LoadNode(ctx, getManyAst, initRoot.AddressMap, hamtOptions...)
+	if err != nil {
+		return err
+	}
+
+	if err := initHamt.ForEachParallel(ctx, func(k string, val *cbg.Deferred) error {
+		var idCbg cbg.CborInt
+		addr, err := filaddr.NewFromBytes([]byte(k))
+		if err != nil {
+			return xerrors.Errorf("invalid address (%x) found in state tree key: %w", []byte(k), err)
+		}
+
+		err = idCbg.UnmarshalCBOR(bytes.NewReader(val.Raw))
+		if err != nil {
+			return err
+		}
+
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+
+		if err := initFunc(int64(idCbg), addr); err != nil {
 			return err
 		}
 

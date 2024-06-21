@@ -1,7 +1,9 @@
 package main
 
 import (
+	"errors"
 	"fmt"
+
 	"github.com/filecoin-project/go-address"
 	"github.com/filecoin-project/go-state-types/abi"
 	lchstate "github.com/filecoin-project/lotus/chain/state"
@@ -57,7 +59,10 @@ func filToEthAddr(cctx *cli.Context) error {
 
 func filAddrs(cctx *cli.Context) error {
 	args := cctx.Args()
+	ctx := cctx.Context
 	actorAddrString := args.Get(0)
+
+	expensiveLookup := cctx.Bool("expensive")
 
 	was0xAddr := false
 	var err error
@@ -114,6 +119,28 @@ func filAddrs(cctx *cli.Context) error {
 		} else {
 			// If it's a masked 0x address, return the f0 and if enabled the expensive reverse lookup for the fX address
 			fmt.Println(addr)
+		}
+
+		if expensiveLookup {
+			var fXAddr address.Address
+			idValUint, err := address.IDFromAddress(addr)
+			if err != nil {
+				return err
+			}
+			idVal := int64(idValUint)
+			completionErr := fmt.Errorf("query complete")
+			if err := enumInit(ctx, bg, ts, func(id int64, actorAddr address.Address) error {
+				if idVal == id {
+					fXAddr = actorAddr
+					return completionErr
+				}
+				return nil
+			}); err == nil {
+				return fmt.Errorf("unable to perform reverse lookup for id address %s", addr)
+			} else if !errors.Is(err, completionErr) {
+				return err
+			}
+			fmt.Println(fXAddr)
 		}
 	case address.Delegated:
 		if !was0xAddr {
