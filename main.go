@@ -90,6 +90,13 @@ func main() {
 				Action:      filToEthAddr,
 			},
 			{
+				Name:        "addresses",
+				Usage:       "<address>",
+				Description: "Lists all the address types associated with an fX or 0x address. Note: will not back calculate fX addresses for f0 or masked ID 0x addresses",
+				Flags:       append([]cli.Flag{}, stateFlags...),
+				Action:      filAddrs,
+			},
+			{
 				Name:        "msig-coins",
 				Usage:       "<signer-address>",
 				Description: "Add up all of the coins controlled by multisigs with the given signer and signing threshold of 1",
