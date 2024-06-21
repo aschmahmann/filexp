@@ -40,8 +40,8 @@ import (
 	"github.com/ribasushi/go-toolbox-interplanetary/fil"
 )
 
-func cmdFevmExec(ctx *cli.Context) error {
-	args := ctx.Args()
+func cmdFevmExec(cctx *cli.Context) error {
+	args := cctx.Args()
 	eaddr, err := ethtypes.ParseEthAddress(args.Get(0))
 	if err != nil {
 		return xerrors.Errorf("unable to parse eth address: %w", err)
@@ -51,12 +51,12 @@ func cmdFevmExec(ctx *cli.Context) error {
 		return xerrors.Errorf("could not decode hex bytes: %w", err)
 	}
 
-	bs, ts, err := getAnchorPoint(ctx)
+	bg, ts, err := getAnchorPoint(cctx)
 	if err != nil {
 		return err
 	}
 
-	return fevmExec(ctx.Context, bs, ts, &eaddr, decodedBytes, ctx.Path("output"))
+	return fevmExec(cctx.Context, bg, ts, &eaddr, decodedBytes, cctx.Path("output"))
 }
 
 func cmdFevmDaemon(cctx *cli.Context) error {

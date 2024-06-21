@@ -55,7 +55,7 @@ func parseActors(ctx context.Context, bg *blockGetter, ts *lchtypes.TipSet, root
 
 	var root lchtypes.StateRoot
 	// Try loading as a new-style state-tree (version/actors tuple).
-	if err := ast.Get(context.TODO(), ts.ParentState(), &root); err != nil {
+	if err := ast.Get(ctx, ts.ParentState(), &root); err != nil {
 		return err
 	}
 
@@ -132,7 +132,7 @@ func getActors(ctx context.Context, bg *blockGetter, ts *lchtypes.TipSet, countO
 
 	var root lchtypes.StateRoot
 	// Try loading as a new-style state-tree (version/actors tuple).
-	if err := ast.Get(context.TODO(), ts.ParentState(), &root); err != nil {
+	if err := ast.Get(ctx, ts.ParentState(), &root); err != nil {
 		return err
 	}
 
@@ -170,7 +170,7 @@ func getActors(ctx context.Context, bg *blockGetter, ts *lchtypes.TipSet, countO
 	return nil
 }
 
-func getBalance(ctx context.Context, bg *blockGetter, ts *lchtypes.TipSet, addr filaddr.Address) error {
+func getBalance(_ context.Context, bg *blockGetter, ts *lchtypes.TipSet, addr filaddr.Address) error {
 	stateTree, err := lchstate.LoadStateTree(ipldcbor.NewCborStore(bg), ts.ParentState())
 	if err != nil {
 		return err
