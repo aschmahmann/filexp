@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -44,12 +43,35 @@ func setupFilContentFetching(h host.Host, ctx context.Context) (*bsclient.Client
 	bs := bsclient.New(ctx, n, nullBS)
 	n.Start(bs)
 
-	// setup pubsub for peer discovery so we can do Bitswap
+	// setup bootstrap connections
+	if err := setupFilBootstrapping(ctx, h); err != nil {
+		return nil, err
+	}
+
+	// setup pubsub for peer discovery
 	if err := setupPubSub(ctx, h); err != nil {
 		return nil, err
 	}
 
+	// setup dht for peer discovery
+	if err := setupFilDHT(ctx, h); err != nil {
+		return nil, err
+	}
+
 	return bs, nil
+}
+
+func setupFilBootstrapping(ctx context.Context, h host.Host) error {
+	for _, bstr := range boostrappers {
+		ai, err := peer.AddrInfoFromString(bstr)
+		if err != nil {
+			return err
+		}
+		go func() {
+			_ = h.Connect(ctx, *ai)
+		}()
+	}
+	return nil
 }
 
 func setupPubSub(ctx context.Context, h host.Host) error {
@@ -58,12 +80,14 @@ func setupPubSub(ctx context.Context, h host.Host) error {
 	if err != nil {
 		return err
 	}
-	t, err := ps.Join("/fil/blocks/testnetnet")
+	_, err = ps.Join("/fil/blocks/testnetnet")
 	if err != nil {
 		return err
 	}
-	_ = t
+	return nil
+}
 
+func setupFilDHT(ctx context.Context, h host.Host) error {
 	opts := []dht.Option{dht.Mode(dht.ModeClient),
 		dht.Datastore(datastore.NewNullDatastore()),
 		dht.Validator(ipns.Validator{}),
@@ -84,23 +108,6 @@ func setupPubSub(ctx context.Context, h host.Host) error {
 		return err
 	}
 
-	wg := sync.WaitGroup{}
-	wg.Add(len(boostrappers))
-	for _, bstr := range boostrappers {
-		ai, err := peer.AddrInfoFromString(bstr)
-		if err != nil {
-			return err
-		}
-		go func() {
-			_ = h.Connect(ctx, *ai)
-			wg.Done()
-		}()
-	}
-	wg.Wait()
-
-	ticker := time.NewTicker(time.Second)
-	defer ticker.Stop()
-
 	go func() {
 		t2 := time.NewTicker(time.Second * 10)
 		defer t2.Stop()
@@ -112,18 +119,7 @@ func setupPubSub(ctx context.Context, h host.Host) error {
 		}
 	}()
 
-	for {
-		select {
-		case <-ticker.C:
-			if np := len(h.Network().Peers()); np > len(boostrappers)*2 {
-				return nil
-			} else {
-				fmt.Printf("number of peers: %d\n", np)
-			}
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-	}
+	return nil
 }
 
 func initBitswapGetter(ctx context.Context) (*blockGetter, error) {
