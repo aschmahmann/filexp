@@ -3,10 +3,12 @@ package main
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	filaddr "github.com/filecoin-project/go-address"
 	filabi "github.com/filecoin-project/go-state-types/abi"
+	filbuiltin "github.com/filecoin-project/go-state-types/builtin"
 	lchtypes "github.com/filecoin-project/lotus/chain/types"
 	"github.com/ipfs/go-cid"
 	logging "github.com/ipfs/go-log/v2"
@@ -16,6 +18,10 @@ import (
 )
 
 var log = logging.Logger(fmt.Sprintf("%s(%d)", "filexp", os.Getpid()))
+
+// 20 is considered good for WdPoST: https://github.com/filecoin-project/builtin-actors/blob/v13.0.0/runtime/src/runtime/policy.rs#L290-L293
+// nevertheless bump to 30 as per https://filecoinproject.slack.com/archives/C02D73MHM63/p1718762303033709?thread_ts=1718693790.469889&cid=C02D73MHM63
+var defaultRpcLookbackEpochs = uint(30)
 
 var stateFlags = []cli.Flag{
 	&cli.PathFlag{
@@ -31,10 +37,13 @@ var stateFlags = []cli.Flag{
 		Usage: "Filecoin RPC API endpoint to determine current tipset",
 	},
 	&cli.UintFlag{
-		Name:        "lookback-epochs",
-		Value:       20, // good for WdPoST - good for us: https://github.com/filecoin-project/builtin-actors/blob/v13.0.0/runtime/src/runtime/policy.rs#L290-L293
-		DefaultText: "20 epochs / 10 minutes",
-		Usage:       "How many epochs to look back when pulling state from the network",
+		Name:  "lookback-epochs",
+		Usage: "How many epochs to look back when pulling state from the network",
+		Value: defaultRpcLookbackEpochs,
+		DefaultText: fmt.Sprintf("%d epochs / %s minutes",
+			defaultRpcLookbackEpochs,
+			strconv.FormatFloat(float64(defaultRpcLookbackEpochs*filbuiltin.EpochDurationSeconds)/60, 'f', -1, 64),
+		),
 	},
 	&cli.BoolFlag{
 		Name:  "trust-chainlove",
