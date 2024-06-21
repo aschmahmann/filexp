@@ -25,7 +25,7 @@ func filToEthAddr(cctx *cli.Context) error {
 			return err
 		}
 		fmt.Println(eaddr.String())
-	case address.Actor, address.BLS:
+	case address.SECP256K1, address.Actor, address.BLS:
 	default:
 		return fmt.Errorf("error unsupported address type %v", p)
 	}
