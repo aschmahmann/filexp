@@ -5,6 +5,13 @@ filexp
 
 ## Installation
 
+There are two flavors of filexp that you can install:
+1. Fully featured, including various commands for interacting with the FVM and FEVM
+2. A more limited version that handles most commands (currently everything but `fevm-exec` and `fevm-daemon`)
+   - This version is the only one that works on Windows
+
+### Fully featured
+
 Install Go and run:
 
 ```
@@ -12,10 +19,17 @@ git clone https://github.com/aschmahmann/filexp
 cd filexp
 git submodule update --init
 make -C extern/filecoin-ffi
-go install
+go install -tags fvm
 ```
 
-Note: Currently does not work on Windows
+### Limited
+
+Install Go and run:
+```
+git clone https://github.com/aschmahmann/filexp
+cd filexp
+go install
+```
 
 ## Running
 

@@ -1,4 +1,4 @@
-//go:build !unix
+//go:build !fvm
 
 package main
 
@@ -8,10 +8,12 @@ import (
 	"github.com/urfave/cli/v2"
 )
 
+var fvmUnsupported error = fmt.Errorf("unsupported in this build - build with fvm tag")
+
 func cmdFevmExec(ctx *cli.Context) error {
-	return fmt.Errorf("not implemented on Windows")
+	return fvmUnsupported
 }
 
 func cmdFevmDaemon(ctx *cli.Context) error {
-	return fmt.Errorf("not implemented on Windows")
+	return fvmUnsupported
 }
