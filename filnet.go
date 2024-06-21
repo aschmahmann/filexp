@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -84,8 +83,6 @@ func setupPubSub(ctx context.Context, h host.Host) error {
 		return err
 	}
 
-	wg := sync.WaitGroup{}
-	wg.Add(len(boostrappers))
 	for _, bstr := range boostrappers {
 		ai, err := peer.AddrInfoFromString(bstr)
 		if err != nil {
@@ -93,10 +90,8 @@ func setupPubSub(ctx context.Context, h host.Host) error {
 		}
 		go func() {
 			_ = h.Connect(ctx, *ai)
-			wg.Done()
 		}()
 	}
-	wg.Wait()
 
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
