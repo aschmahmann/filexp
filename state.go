@@ -123,7 +123,20 @@ func parseActors(ctx context.Context, bg *blockGetter, ts *lchtypes.TipSet, root
 
 func getActors(ctx context.Context, bg *blockGetter, ts *lchtypes.TipSet, countOnly bool) error {
 	var numActors uint64
+	if err := enumActors(ctx, bg, ts, func(actor *lchtypes.Actor, addr filaddr.Address) error {
+		atomic.AddUint64(&numActors, 1)
+		if !countOnly {
+			fmt.Printf("%v\n", addr)
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	fmt.Printf("total actors found: %d\n", numActors)
+	return nil
+}
 
+func enumActors(ctx context.Context, bg *blockGetter, ts *lchtypes.TipSet, actorFunc func(actor *lchtypes.Actor, addr filaddr.Address) error) error {
 	ast := filstore.WrapStore(ctx, ipldcbor.NewCborStore(bg))
 	getManyAst := &getManyCborStore{
 		BasicIpldStore: ipldcbor.NewCborStore(bg),
@@ -155,16 +168,15 @@ func getActors(ctx context.Context, bg *blockGetter, ts *lchtypes.TipSet, countO
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		atomic.AddUint64(&numActors, 1)
-		if !countOnly {
-			fmt.Printf("%v\n", addr)
+
+		if err := actorFunc(act, addr); err != nil {
+			return err
 		}
+
 		return nil
 	}); err != nil {
 		return err
 	}
-
-	fmt.Printf("total actors found: %d\n", numActors)
 	return nil
 }
 
