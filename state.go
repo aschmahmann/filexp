@@ -10,12 +10,16 @@ import (
 	filaddr "github.com/filecoin-project/go-address"
 	hamt "github.com/filecoin-project/go-hamt-ipld/v3"
 	filabi "github.com/filecoin-project/go-state-types/abi"
+	actorstypes "github.com/filecoin-project/go-state-types/actors"
 	filbig "github.com/filecoin-project/go-state-types/big"
 	filbuiltin "github.com/filecoin-project/go-state-types/builtin"
 	_init13 "github.com/filecoin-project/go-state-types/builtin/v13/init"
 	filadt "github.com/filecoin-project/go-state-types/builtin/v13/util/adt"
+	"github.com/filecoin-project/go-state-types/manifest"
 	filstore "github.com/filecoin-project/go-state-types/store"
+	"github.com/filecoin-project/lotus/chain/actors"
 	lbi "github.com/filecoin-project/lotus/chain/actors/builtin"
+	lbiinit "github.com/filecoin-project/lotus/chain/actors/builtin/init"
 	lbimsig "github.com/filecoin-project/lotus/chain/actors/builtin/multisig"
 	lchstate "github.com/filecoin-project/lotus/chain/state"
 	lchtypes "github.com/filecoin-project/lotus/chain/types"
@@ -178,6 +182,21 @@ func enumActors(ctx context.Context, bg *blockGetter, ts *lchtypes.TipSet, actor
 		return err
 	}
 	return nil
+}
+
+func init() {
+	latestInitCode := lbiinit.AllCodes()[len(lbiinit.AllCodes())-1]
+	if name, av, ok := actors.GetActorMetaByCode(latestInitCode); ok {
+		if name != manifest.InitKey {
+			panic(xerrors.Errorf("actor code is not init: %s", name))
+		}
+
+		if av != actorstypes.Version13 {
+			panic(xerrors.Errorf(
+				"the application is out of date with the network, please update to a later version," +
+					" or if this is the latest version file an issue to update the init actor version"))
+		}
+	}
 }
 
 func enumInit(ctx context.Context, bg *blockGetter, ts *lchtypes.TipSet, initFunc func(id int64, addr filaddr.Address) error) error {
