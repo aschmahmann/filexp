@@ -10,12 +10,16 @@ import (
 	filaddr "github.com/filecoin-project/go-address"
 	hamt "github.com/filecoin-project/go-hamt-ipld/v3"
 	filabi "github.com/filecoin-project/go-state-types/abi"
+	actorstypes "github.com/filecoin-project/go-state-types/actors"
 	filbig "github.com/filecoin-project/go-state-types/big"
 	filbuiltin "github.com/filecoin-project/go-state-types/builtin"
+	_init13 "github.com/filecoin-project/go-state-types/builtin/v13/init"
 	filadt "github.com/filecoin-project/go-state-types/builtin/v13/util/adt"
+	"github.com/filecoin-project/go-state-types/manifest"
 	filstore "github.com/filecoin-project/go-state-types/store"
-
+	"github.com/filecoin-project/lotus/chain/actors"
 	lbi "github.com/filecoin-project/lotus/chain/actors/builtin"
+	lbiinit "github.com/filecoin-project/lotus/chain/actors/builtin/init"
 	lbimsig "github.com/filecoin-project/lotus/chain/actors/builtin/multisig"
 	lchstate "github.com/filecoin-project/lotus/chain/state"
 	lchtypes "github.com/filecoin-project/lotus/chain/types"
@@ -170,6 +174,81 @@ func enumActors(ctx context.Context, bg *blockGetter, ts *lchtypes.TipSet, actor
 		}
 
 		if err := actorFunc(act, addr); err != nil {
+			return err
+		}
+
+		return nil
+	}); err != nil {
+		return err
+	}
+	return nil
+}
+
+func init() {
+	latestInitCode := lbiinit.AllCodes()[len(lbiinit.AllCodes())-1]
+	if name, av, ok := actors.GetActorMetaByCode(latestInitCode); ok {
+		if name != manifest.InitKey {
+			panic(xerrors.Errorf("actor code is not init: %s", name))
+		}
+
+		if av != actorstypes.Version13 {
+			panic(xerrors.Errorf(
+				"the application is out of date with the network, please update to a later version," +
+					" or if this is the latest version file an issue to update the init actor version"))
+		}
+	}
+}
+
+func enumInit(ctx context.Context, bg *blockGetter, ts *lchtypes.TipSet, initFunc func(id int64, addr filaddr.Address) error) error {
+	ast := filstore.WrapStore(ctx, ipldcbor.NewCborStore(bg))
+	getManyAst := &getManyCborStore{
+		BasicIpldStore: ipldcbor.NewCborStore(bg),
+	}
+
+	var root lchtypes.StateRoot
+	// Try loading as a new-style state-tree (version/actors tuple).
+	if err := ast.Get(ctx, ts.ParentState(), &root); err != nil {
+		return err
+	}
+
+	stateTree, err := lchstate.LoadStateTree(ipldcbor.NewCborStore(bg), ts.ParentState())
+	if err != nil {
+		return err
+	}
+
+	initActor, err := stateTree.GetActor(filbuiltin.InitActorAddr)
+	if err != nil {
+		return err
+	}
+
+	var initRoot _init13.State
+	// Try loading as a new-style state-tree (version/actors tuple).
+	if err := ast.Get(ctx, initActor.Head, &initRoot); err != nil {
+		return err
+	}
+
+	initHamt, err := hamt.LoadNode(ctx, getManyAst, initRoot.AddressMap, hamtOptions...)
+	if err != nil {
+		return err
+	}
+
+	if err := initHamt.ForEachParallel(ctx, func(k string, val *cbg.Deferred) error {
+		var idCbg cbg.CborInt
+		addr, err := filaddr.NewFromBytes([]byte(k))
+		if err != nil {
+			return xerrors.Errorf("invalid address (%x) found in state tree key: %w", []byte(k), err)
+		}
+
+		err = idCbg.UnmarshalCBOR(bytes.NewReader(val.Raw))
+		if err != nil {
+			return err
+		}
+
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+
+		if err := initFunc(int64(idCbg), addr); err != nil {
 			return err
 		}
 

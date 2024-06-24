@@ -92,9 +92,15 @@ func main() {
 			{
 				Name:        "addresses",
 				Usage:       "<address>",
-				Description: "Lists all the address types associated with an fX or 0x address. Note: will not back calculate fX addresses for f0 or masked ID 0x addresses",
-				Flags:       append([]cli.Flag{}, stateFlags...),
-				Action:      filAddrs,
+				Description: "Lists all the address types associated with an fX or 0x address",
+				Flags: append([]cli.Flag{
+					&cli.BoolFlag{
+						Name:  "expensive",
+						Usage: "enables doing an expensive reverse lookup for resolving identity addresses into their robust addresses",
+						Value: false,
+					},
+				}, stateFlags...),
+				Action: filAddrs,
 			},
 			{
 				Name:        "msig-coins",
