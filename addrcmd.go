@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+
 	"github.com/filecoin-project/go-address"
 	"github.com/filecoin-project/go-state-types/abi"
 	lchstate "github.com/filecoin-project/lotus/chain/state"
@@ -40,7 +41,7 @@ func filToEthAddr(cctx *cli.Context) error {
 	if err != nil {
 		return err
 	}
-	idAddr, err := stateTree.LookupID(addr)
+	idAddr, err := stateTree.LookupIDAddress(addr)
 	if err != nil {
 		return err
 	}
@@ -91,7 +92,7 @@ func filAddrs(cctx *cli.Context) error {
 		return err
 	}
 
-	idAddr, err := stateTree.LookupID(addr)
+	idAddr, err := stateTree.LookupIDAddress(addr)
 	if err != nil {
 		return err
 	}

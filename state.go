@@ -12,7 +12,7 @@ import (
 	filabi "github.com/filecoin-project/go-state-types/abi"
 	filbig "github.com/filecoin-project/go-state-types/big"
 	filbuiltin "github.com/filecoin-project/go-state-types/builtin"
-	filadt "github.com/filecoin-project/go-state-types/builtin/v13/util/adt"
+	filadt "github.com/filecoin-project/go-state-types/builtin/v14/util/adt"
 	filstore "github.com/filecoin-project/go-state-types/store"
 
 	lbi "github.com/filecoin-project/lotus/chain/actors/builtin"
@@ -47,7 +47,7 @@ func parseActors(ctx context.Context, bg *blockGetter, ts *lchtypes.TipSet, root
 	if err != nil {
 		return err
 	}
-	rootAddrID, err := stateTree.LookupID(rootAddr)
+	rootAddrID, err := stateTree.LookupIDAddress(rootAddr)
 	if err != nil {
 		return err
 	}
