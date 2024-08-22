@@ -54,7 +54,7 @@ var stateFlags = []cli.Flag{
 func main() {
 	logging.SetLogLevel("*", "INFO")
 	// the network stack is incredibly chatty: silence it all
-	for _, c := range []string{"bitswap", "dht", "dht/RtRefreshManager", "routing/http/contentrouter", "net/identify", "bs:sess", "bitswap_network", "bitswap-client", "connmgr", "canonical-log"} {
+	for _, c := range []string{"bitswap", "dht", "dht/RtRefreshManager", "routing/http/contentrouter", "net/identify", "bs:sess", "bitswap/session", "bitswap_network", "bitswap/network", "bitswap-client", "bitswap/client", "bitswap/client/msgq", "swarm2", "connmgr", "canonical-log"} {
 		logging.SetLogLevel(c, "ERROR")
 	}
 
