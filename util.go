@@ -15,6 +15,10 @@ import (
 	caridx "github.com/ipld/go-car/v2/index"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/xerrors"
+
+	// force bundle load, needed for actors.GetActorCodeID() to work
+	// DO NOT REMOVE as nothing will work
+	_ "github.com/filecoin-project/lotus/build"
 )
 
 func loadBlockData(ctx context.Context, bg *blockGetter, cids []cid.Cid) ([][]byte, error) {
