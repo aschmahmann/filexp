@@ -1,11 +1,17 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"sync"
 	"time"
 
+	filaddr "github.com/filecoin-project/go-address"
+	filhamt "github.com/filecoin-project/go-hamt-ipld/v3"
+	filbuiltin "github.com/filecoin-project/go-state-types/builtin"
+	filstore "github.com/filecoin-project/go-state-types/store"
+	lchstate "github.com/filecoin-project/lotus/chain/state"
 	lchtypes "github.com/filecoin-project/lotus/chain/types"
 	blkfmt "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
@@ -13,6 +19,8 @@ import (
 	"github.com/ipld/go-car/v2"
 	carbs "github.com/ipld/go-car/v2/blockstore"
 	caridx "github.com/ipld/go-car/v2/index"
+	"github.com/minio/sha256-simd"
+	cbg "github.com/whyrusleeping/cbor-gen"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/xerrors"
 
@@ -20,6 +28,71 @@ import (
 	// DO NOT REMOVE as nothing will work
 	_ "github.com/filecoin-project/lotus/build"
 )
+
+func lookupID(ctx context.Context, cbs *ipldcbor.BasicIpldStore, ts *lchtypes.TipSet, addr filaddr.Address) (filaddr.Address, error) {
+	if addr.Protocol() == filaddr.ID {
+		return addr, nil
+	}
+	stateTree, err := lchstate.LoadStateTree(cbs, ts.ParentState())
+	if err != nil {
+		return filaddr.Undef, err
+	}
+	return stateTree.LookupIDAddress(addr)
+}
+
+func loadStateRoot(ctx context.Context, cbs *ipldcbor.BasicIpldStore, ts *lchtypes.TipSet) (*lchtypes.StateRoot, error) {
+	var root lchtypes.StateRoot
+	if err := filstore.WrapStore(ctx, cbs).Get(ctx, ts.ParentState(), &root); err != nil {
+		return nil, err
+	}
+
+	return &root, nil
+}
+
+func iterateActors(ctx context.Context, cbs *ipldcbor.BasicIpldStore, ts *lchtypes.TipSet, cb func(actorID filaddr.Address, actor lchtypes.Actor) error) error {
+	sr, err := loadStateRoot(ctx, cbs, ts)
+	if err != nil {
+		return err
+	}
+
+	return parallelIterateMap(ctx, cbs, sr.Actors, func(k, vCbor []byte) error {
+		id, err := filaddr.NewFromBytes(k)
+		if err != nil {
+			return xerrors.Errorf("invalid address (%x) found in state tree key: %w", k, err)
+		}
+
+		var act lchtypes.Actor
+		if err := (&act).UnmarshalCBOR(bytes.NewReader(vCbor)); err != nil {
+			return err
+		}
+
+		return cb(id, act)
+	})
+}
+
+var hamtOpts = []filhamt.Option{
+	filhamt.UseHashFunction(func(input []byte) []byte {
+		res := sha256.Sum256(input)
+		return res[:]
+	}),
+	filhamt.UseTreeBitWidth(filbuiltin.DefaultHamtBitwidth),
+}
+
+func parallelIterateMap(ctx context.Context, cbs *ipldcbor.BasicIpldStore, root cid.Cid, cb func(k, vCbor []byte) error) error {
+	node, err := filhamt.LoadNode(
+		ctx,
+		&getManyCborStore{BasicIpldStore: cbs},
+		root,
+		hamtOpts...,
+	)
+	if err != nil {
+		return err
+	}
+
+	return node.ForEachParallel(ctx, func(k string, v *cbg.Deferred) error {
+		return cb([]byte(k), v.Raw)
+	})
+}
 
 func loadBlockData(ctx context.Context, bg *blockGetter, cids []cid.Cid) ([][]byte, error) {
 	blks := make([][]byte, len(cids))
