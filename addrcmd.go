@@ -5,7 +5,6 @@ import (
 
 	"github.com/filecoin-project/go-address"
 	"github.com/filecoin-project/go-state-types/abi"
-	lchstate "github.com/filecoin-project/lotus/chain/state"
 	"github.com/filecoin-project/lotus/chain/types/ethtypes"
 	ipldcbor "github.com/ipfs/go-ipld-cbor"
 	"github.com/urfave/cli/v2"
@@ -37,11 +36,7 @@ func filToEthAddr(cctx *cli.Context) error {
 	}
 	defer bg.LogStats()
 
-	stateTree, err := lchstate.LoadStateTree(ipldcbor.NewCborStore(bg), ts.ParentState())
-	if err != nil {
-		return err
-	}
-	idAddr, err := stateTree.LookupIDAddress(addr)
+	idAddr, err := lookupID(cctx.Context, ipldcbor.NewCborStore(bg), ts, addr)
 	if err != nil {
 		return err
 	}
@@ -87,12 +82,7 @@ func filAddrs(cctx *cli.Context) error {
 	}
 	defer bg.LogStats()
 
-	stateTree, err := lchstate.LoadStateTree(ipldcbor.NewCborStore(bg), ts.ParentState())
-	if err != nil {
-		return err
-	}
-
-	idAddr, err := stateTree.LookupIDAddress(addr)
+	idAddr, err := lookupID(cctx.Context, ipldcbor.NewCborStore(bg), ts, addr)
 	if err != nil {
 		return err
 	}
