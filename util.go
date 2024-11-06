@@ -29,7 +29,7 @@ import (
 	_ "github.com/filecoin-project/lotus/build"
 )
 
-func lookupID(ctx context.Context, cbs *ipldcbor.BasicIpldStore, ts *lchtypes.TipSet, addr filaddr.Address) (filaddr.Address, error) {
+func lookupID(cbs *ipldcbor.BasicIpldStore, ts *lchtypes.TipSet, addr filaddr.Address) (filaddr.Address, error) {
 	if addr.Protocol() == filaddr.ID {
 		return addr, nil
 	}
