@@ -25,7 +25,7 @@ func getCoins(ctx context.Context, bg *blockGetter, ts *lchtypes.TipSet, addr fi
 	var mx sync.Mutex
 	foundAttoFil := filabi.NewTokenAmount(0)
 
-	actorAddrID, err := lookupID(ctx, cbs, ts, addr)
+	actorAddrID, err := lookupID(cbs, ts, addr)
 	if err != nil {
 		return err
 	}

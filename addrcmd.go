@@ -36,7 +36,7 @@ func filToEthAddr(cctx *cli.Context) error {
 	}
 	defer bg.LogStats()
 
-	idAddr, err := lookupID(cctx.Context, ipldcbor.NewCborStore(bg), ts, addr)
+	idAddr, err := lookupID(ipldcbor.NewCborStore(bg), ts, addr)
 	if err != nil {
 		return err
 	}
@@ -82,7 +82,7 @@ func filAddrs(cctx *cli.Context) error {
 	}
 	defer bg.LogStats()
 
-	idAddr, err := lookupID(cctx.Context, ipldcbor.NewCborStore(bg), ts, addr)
+	idAddr, err := lookupID(ipldcbor.NewCborStore(bg), ts, addr)
 	if err != nil {
 		return err
 	}
