@@ -38,8 +38,8 @@ var boostrappers = []string{
 
 func setupFilContentFetching(h host.Host, ctx context.Context) (*bsclient.Client, error) {
 	nullBS := blockstore.NewBlockstore(datastore.NewNullDatastore())
-	n := bsnet.NewFromIpfsHost(h, rhelpers.Null{}, bsnet.Prefix("/chain"))
-	bs := bsclient.New(ctx, n, nullBS)
+	n := bsnet.NewFromIpfsHost(h, bsnet.Prefix("/chain"))
+	bs := bsclient.New(ctx, n, rhelpers.Null{}, nullBS)
 	n.Start(bs)
 
 	// setup bootstrap connections
