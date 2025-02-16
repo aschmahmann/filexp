@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+
 	bsclient "github.com/ipfs/boxo/bitswap/client"
 	bsnet "github.com/ipfs/boxo/bitswap/network"
 	"github.com/ipfs/boxo/blockstore"
@@ -17,10 +18,9 @@ func setupIPFSContentFetching(h host.Host, ctx context.Context) (*bsclient.Clien
 		return nil, err
 	}
 
-	cr := contentrouter.NewContentRoutingClient(r)
 	nullBS := blockstore.NewBlockstore(datastore.NewNullDatastore())
-	n := bsnet.NewFromIpfsHost(h, cr)
-	bs := bsclient.New(ctx, n, nullBS)
+	n := bsnet.NewFromIpfsHost(h)
+	bs := bsclient.New(ctx, n, contentrouter.NewContentRoutingClient(r), nullBS)
 	n.Start(bs)
 
 	return bs, nil
