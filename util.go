@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"code.riba.cloud/go/toolbox-interplanetary/fil"
 	filaddr "github.com/filecoin-project/go-address"
 	filhamt "github.com/filecoin-project/go-hamt-ipld/v3"
 	filbuiltin "github.com/filecoin-project/go-state-types/builtin"
@@ -218,3 +219,18 @@ func (bg *blockGetter) LogStats() {
 }
 
 var _ ipldcbor.IpldBlockstore = &blockGetter{}
+
+type filRpcBs struct {
+	rpc fil.LotusDaemonAPIClientV0
+}
+
+func (frbs *filRpcBs) Put(context.Context, blkfmt.Block) error {
+	return xerrors.New("this is a readonly store")
+}
+func (rbs *filRpcBs) Get(ctx context.Context, c cid.Cid) (blkfmt.Block, error) {
+	d, err := rbs.rpc.ChainReadObj(ctx, c)
+	if err != nil {
+		return nil, err
+	}
+	return blkfmt.NewBlockWithCid(d, c)
+}
