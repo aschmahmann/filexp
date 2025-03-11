@@ -30,6 +30,14 @@ import (
 	_ "github.com/filecoin-project/lotus/build"
 )
 
+func stringSliceMap(ss []string, f func(string) string) []string {
+	ssout := make([]string, len(ss))
+	for i, s := range ss {
+		ssout[i] = f(s)
+	}
+	return ssout
+}
+
 func lookupID(cbs *ipldcbor.BasicIpldStore, ts *lchtypes.TipSet, addr filaddr.Address) (filaddr.Address, error) {
 	if addr.Protocol() == filaddr.ID {
 		return addr, nil
@@ -119,26 +127,26 @@ func loadBlockData(ctx context.Context, bg *blockGetter, cids []cid.Cid) ([][]by
 	return blks, eg.Wait()
 }
 
-func getStateFromCar(ctx context.Context, srcSnapshot string) (*blockGetter, lchtypes.TipSetKey, error) {
+func getStateFromCar(ctx context.Context, srcSnapshot string) (*blockGetter, *lchtypes.TipSetKey, error) {
 	start := time.Now()
 
 	carbs, err := blockstoreFromSnapshot(ctx, srcSnapshot)
 	if err != nil {
-		return nil, lchtypes.EmptyTSK, err
+		return nil, nil, err
 	}
 
 	log.Infof("duration to load snapshot: %v", time.Since(start))
 
 	carRoots, err := carbs.Roots()
 	if err != nil {
-		return nil, lchtypes.EmptyTSK, err
+		return nil, nil, err
 	}
 	tsk := lchtypes.NewTipSetKey(carRoots...)
 
 	return &blockGetter{
 		m:              make(map[cid.Cid]int),
 		IpldBlockstore: carbs,
-	}, tsk, nil
+	}, &tsk, nil
 }
 
 func blockstoreFromSnapshot(_ context.Context, snapshotFilename string) (*carbs.ReadOnly, error) {
