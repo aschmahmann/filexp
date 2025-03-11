@@ -36,6 +36,10 @@ var stateFlags = []cli.Flag{
 		Name:  "rpc-endpoint",
 		Usage: "Filecoin RPC API endpoint to determine current tipset",
 	},
+	&cli.StringFlag{
+		Name:  "rpc-fullnode",
+		Usage: "Filecoin Full Node RPC API, to use as source of current tipset and all IPLD blocks",
+	},
 	&cli.UintFlag{
 		Name:  "lookback-epochs",
 		Usage: "How many epochs to look back when pulling state from the network",
@@ -165,7 +169,7 @@ func main() {
 const chainLoveURL = "https://api.chain.love/"
 
 func getAnchorPoint(cctx *cli.Context) (*blockGetter, *lchtypes.TipSet, error) {
-	sourceSelect := []string{"car", "tipset-cids", "rpc-endpoint"}
+	sourceSelect := []string{"car", "tipset-cids", "rpc-endpoint", "rpc-fullnode"}
 
 	var isSet int
 	for _, s := range sourceSelect {
@@ -207,7 +211,13 @@ func getAnchorPoint(cctx *cli.Context) (*blockGetter, *lchtypes.TipSet, error) {
 		}
 		tsk = lchtypes.NewTipSetKey(cids...)
 	} else {
-		lApi, apiCloser, err := fil.NewLotusDaemonAPIClientV0(ctx, cctx.String("rpc-endpoint"), 0, "")
+
+		rpcAddr := cctx.String("rpc-fullnode")
+		if rpcAddr == "" {
+			rpcAddr = cctx.String("rpc-endpoint")
+		}
+
+		lApi, apiCloser, err := fil.NewLotusDaemonAPIClientV0(ctx, rpcAddr, 0, "")
 		if err != nil {
 			return nil, nil, err
 		}
@@ -216,6 +226,13 @@ func getAnchorPoint(cctx *cli.Context) (*blockGetter, *lchtypes.TipSet, error) {
 		ts, err = fil.GetTipset(ctx, lApi, filabi.ChainEpoch(cctx.Uint("lookback-epochs")))
 		if err != nil {
 			return nil, nil, err
+		}
+
+		if cctx.IsSet("rpc-fullnode") {
+			bg = &blockGetter{
+				m:              make(map[cid.Cid]int),
+				IpldBlockstore: &filRpcBs{lApi},
+			}
 		}
 	}
 
