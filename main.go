@@ -1,11 +1,14 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"os/signal"
 	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"code.riba.cloud/go/toolbox-interplanetary/fil"
 	filaddr "github.com/filecoin-project/go-address"
@@ -161,7 +164,29 @@ func main() {
 		},
 	}
 
-	if err := app.Run(os.Args); err != nil {
+	topCtx, topCtxShutdown := context.WithCancel(context.Background())
+
+	// sighandler
+	go func() {
+		sigs := make(chan os.Signal, 1)
+
+		signal.Notify(sigs,
+			syscall.SIGTERM,
+			syscall.SIGINT,
+			syscall.SIGHUP,
+			syscall.SIGPIPE,
+		)
+
+		// wait
+		s := <-sigs
+
+		log.Warnf("process received %s, cleaning up...", decodeSigname(s))
+
+		topCtxShutdown()
+	}()
+	// end of sighandler
+
+	if err := app.RunContext(topCtx, os.Args); err != nil {
 		log.Fatalf("%+v", err)
 		os.Exit(1)
 	}
