@@ -13,7 +13,9 @@ import (
 	filaddr "github.com/filecoin-project/go-address"
 	filbuiltin "github.com/filecoin-project/go-state-types/builtin"
 	logging "github.com/ipfs/go-log/v2"
+	"github.com/mattn/go-isatty"
 	"github.com/urfave/cli/v2"
+	"golang.org/x/xerrors"
 )
 
 var log = filexp.Logger
@@ -157,6 +159,30 @@ func main() {
 					defer bg.LogStats()
 
 					return state.GetActors(cctx.Context, bg, ts, cctx.Bool("count-only"))
+				},
+			},
+			{
+				Name:        "dump-statemarketdeals",
+				Description: "Write legacy f05 state to STDOUT, semanitcally identical to FilRPC.StateMarketDeals()",
+				Flags: append([]cli.Flag{
+					&cli.BoolFlag{
+						Name:        "single-document",
+						Value:       false,
+						DefaultText: "emit an inefficient single JSON object identical to result of StateMarketDeals",
+					},
+				}, stateFlags...),
+				Action: func(cctx *cli.Context) error {
+					if isatty.IsTerminal(os.Stdout.Fd()) {
+						return xerrors.New("dumping to terminal is not supported - redirect the output to file or pipe")
+					}
+
+					bg, ts, err := getAnchorPoint(cctx)
+					if err != nil {
+						return err
+					}
+					defer bg.LogStats()
+
+					return state.DumpStateF05(cctx.Context, bg, ts, os.Stdout, cctx.Bool("single-document"))
 				},
 			},
 			{
