@@ -269,7 +269,10 @@ func getAnchorPoint(cctx *cli.Context) (*blockGetter, *lchtypes.TipSet, error) {
 		if err != nil {
 			return nil, nil, err
 		}
-		defer apiCloser()
+		go func() {
+			<-ctx.Done()
+			apiCloser()
+		}()
 
 		// not forced via --tipset-cids
 		if tsk == nil {
