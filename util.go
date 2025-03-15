@@ -195,6 +195,7 @@ func blockstoreFromSnapshot(_ context.Context, snapshotFilename string) (*carbs.
 type blockGetter struct {
 	ipldcbor.IpldBlockstore
 	mx          sync.Mutex
+	firstGet    *time.Time
 	m           map[cid.Cid]int
 	orderedCids []cid.Cid
 }
@@ -206,10 +207,15 @@ func (bg *blockGetter) Get(ctx context.Context, cid cid.Cid) (blkfmt.Block, erro
 	}
 
 	bg.mx.Lock()
-	_, found := bg.m[cid]
-	bg.m[cid] = len(blk.RawData())
-	if !found {
-		bg.orderedCids = append(bg.orderedCids, cid)
+	{
+		if bg.firstGet == nil {
+			t := time.Now()
+			bg.firstGet = &t
+		}
+		if _, found := bg.m[cid]; !found {
+			bg.m[cid] = len(blk.RawData())
+			bg.orderedCids = append(bg.orderedCids, cid)
+		}
 	}
 	bg.mx.Unlock()
 
@@ -222,7 +228,11 @@ func (bg *blockGetter) LogStats() {
 	for _, v := range bg.m {
 		totalSizeBytes += v
 	}
-	log.Infow("total blocks", "count", len(bg.m), "bytes", totalSizeBytes)
+	tsfg := "n/a"
+	if bg.firstGet != nil {
+		tsfg = time.Since(*bg.firstGet).Truncate(time.Millisecond).String()
+	}
+	log.Infow("blockgetterStats", "blocksCount", len(bg.m), "blocksBytes", totalSizeBytes, "timeSinceFirstGet", tsfg)
 	bg.mx.Unlock()
 }
 
