@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	lbuild "github.com/filecoin-project/lotus/build"
 	bsclient "github.com/ipfs/boxo/bitswap/client"
 	bsnet "github.com/ipfs/boxo/bitswap/network"
 	"github.com/ipfs/boxo/blockstore"
@@ -15,14 +16,6 @@ import (
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
 )
-
-var boostrappers = []string{
-	"/dns/node.glif.io/tcp/1235/p2p/12D3KooWBF8cpp65hp2u9LK5mh19x67ftAam84z9LsfaquTDSBpt",
-	"/dns/bootstrap-venus.mainnet.filincubator.com/tcp/8888/p2p/QmQu8C6deXwKvJP2D8B6QGyhngc3ZiDnFzEHBDx8yeBXST",
-	"/dns/bootstrap-mainnet-0.chainsafe-fil.io/tcp/34000/p2p/12D3KooWKKkCZbcigsWTEu1cgNetNbZJqeNtysRtFpq7DTqw3eqH",
-	"/dns/bootstrap-mainnet-1.chainsafe-fil.io/tcp/34000/p2p/12D3KooWGnkd9GQKo3apkShQDaq1d6cKJJmsVe6KiQkacUk1T8oZ",
-	"/dns/bootstrap-mainnet-2.chainsafe-fil.io/tcp/34000/p2p/12D3KooWHQRSDFv4FvAjtU32shQ7znz7oRbLBryXzZ9NMK2feyyH",
-}
 
 func setupFilContentFetching(h host.Host, ctx context.Context) (*bsclient.Client, error) {
 	nullBS := blockstore.NewBlockstore(datastore.NewNullDatastore())
@@ -49,14 +42,14 @@ func setupFilContentFetching(h host.Host, ctx context.Context) (*bsclient.Client
 }
 
 func setupFilBootstrapping(ctx context.Context, h host.Host) error {
+	bsList, err := lbuild.BuiltinBootstrap()
+	if err != nil {
+		return err
+	}
 
-	for _, bstr := range boostrappers {
-		ai, err := peer.AddrInfoFromString(bstr)
-		if err != nil {
-			return err
-		}
+	for _, ai := range bsList {
 		go func() {
-			_ = h.Connect(ctx, *ai)
+			_ = h.Connect(ctx, ai)
 		}()
 	}
 	return nil
