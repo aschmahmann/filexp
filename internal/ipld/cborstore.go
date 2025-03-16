@@ -1,4 +1,4 @@
-package main
+package ipld
 
 import (
 	"context"
@@ -9,9 +9,13 @@ import (
 	ipldcbor "github.com/ipfs/go-ipld-cbor"
 )
 
-type getManyCborStore struct {
-	*ipldcbor.BasicIpldStore
+type getManyIPLDStore interface {
+	GetMany(ctx context.Context, cids []cid.Cid, outs []interface{}) <-chan *hamt.OptionalInteger
 }
+
+var _ getManyIPLDStore = (*getManyCborStore)(nil)
+
+type getManyCborStore struct{ ipldcbor.IpldStore }
 
 func (g *getManyCborStore) GetMany(ctx context.Context, cids []cid.Cid, outs []interface{}) <-chan *hamt.OptionalInteger {
 	outCh := make(chan *hamt.OptionalInteger)
@@ -47,9 +51,3 @@ func (g *getManyCborStore) GetMany(ctx context.Context, cids []cid.Cid, outs []i
 	}()
 	return outCh
 }
-
-type getManyIPLDStore interface {
-	GetMany(ctx context.Context, cids []cid.Cid, outs []interface{}) <-chan *hamt.OptionalInteger
-}
-
-var _ getManyIPLDStore = (*getManyCborStore)(nil)

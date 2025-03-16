@@ -13,17 +13,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/urfave/cli/v2"
-	"golang.org/x/xerrors"
-
 	"code.riba.cloud/go/toolbox-interplanetary/fil"
-	filaddr "github.com/filecoin-project/go-address"
+	"github.com/aschmahmann/filexp/internal/eth"
+	"github.com/aschmahmann/filexp/internal/ipld"
 	"github.com/filecoin-project/go-jsonrpc"
 	"github.com/filecoin-project/go-state-types/abi"
-	filbig "github.com/filecoin-project/go-state-types/big"
-	filbuiltin "github.com/filecoin-project/go-state-types/builtin"
-	"github.com/filecoin-project/lotus/build"
-	"github.com/filecoin-project/lotus/chain/actors"
+	lbs "github.com/filecoin-project/lotus/blockstore"
 	"github.com/filecoin-project/lotus/chain/consensus"
 	"github.com/filecoin-project/lotus/chain/consensus/filcns"
 	lchstmgr "github.com/filecoin-project/lotus/chain/stmgr"
@@ -32,11 +27,14 @@ import (
 	"github.com/filecoin-project/lotus/chain/types/ethtypes"
 	"github.com/filecoin-project/lotus/chain/vm"
 	"github.com/filecoin-project/lotus/cmd/lotus-sim/simulation/mock"
+	blkfmt "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
 	ds "github.com/ipfs/go-datastore"
 	dssync "github.com/ipfs/go-datastore/sync"
 	ipldcbor "github.com/ipfs/go-ipld-cbor"
 	carbs "github.com/ipld/go-car/v2/blockstore"
+	"github.com/urfave/cli/v2"
+	"golang.org/x/xerrors"
 )
 
 func cmdFevmExec(cctx *cli.Context) error {
@@ -97,7 +95,7 @@ func cmdFevmDaemon(cctx *cli.Context) error {
 		defer apiCloser()
 	}
 
-	sm, err := newFilStateReader(bg)
+	sm, err := newFilStateManager(bg)
 	if err != nil {
 		return err
 	}
@@ -221,7 +219,7 @@ func (e *ethRpcResolver) Call(ctx context.Context, eaddr ethtypes.EthAddress, me
 		e.tsMx.Unlock()
 	}
 
-	filMsg, err := getFevmRequest(&eaddr, methodData)
+	filMsg, err := eth.PrepFevmRequest(&eaddr, methodData)
 	if err != nil {
 		return nil, err
 	}
@@ -239,14 +237,14 @@ func (e *ethRpcResolver) Call(ctx context.Context, eaddr ethtypes.EthAddress, me
 	return ret, nil
 }
 
-func fevmExec(ctx context.Context, bg *blockGetter, ts *lchtypes.TipSet, eaddr *ethtypes.EthAddress, edata ethtypes.EthBytes, outputCAR string) error {
-	filMsg, err := getFevmRequest(eaddr, edata)
+func fevmExec(ctx context.Context, bg *ipld.CountingBlockGetter, ts *lchtypes.TipSet, eaddr *ethtypes.EthAddress, edata ethtypes.EthBytes, outputCAR string) error {
+	filMsg, err := eth.PrepFevmRequest(eaddr, edata)
 	if err != nil {
 		return err
 	}
 	log.Infof("epoch %s", ts.Height())
 
-	sm, err := newFilStateReader(bg)
+	sm, err := newFilStateManager(bg)
 	if err != nil {
 		return err
 	}
@@ -263,7 +261,7 @@ func fevmExec(ctx context.Context, bg *blockGetter, ts *lchtypes.TipSet, eaddr *
 		return fmt.Errorf("error loading state root %w", err)
 	}
 
-	for _, c := range bg.orderedCids {
+	for _, c := range bg.OrderedCids() {
 		log.Infof("pre-call cid: %s", c)
 	}
 
@@ -280,7 +278,7 @@ func fevmExec(ctx context.Context, bg *blockGetter, ts *lchtypes.TipSet, eaddr *
 
 	fmt.Println(string(str))
 
-	cidsInOrder := bg.orderedCids
+	cidsInOrder := bg.OrderedCids()
 	if err != nil {
 		return err
 	}
@@ -313,83 +311,7 @@ func fevmExec(ctx context.Context, bg *blockGetter, ts *lchtypes.TipSet, eaddr *
 	return nil
 }
 
-func getFevmRequest(eaddr *ethtypes.EthAddress, edata ethtypes.EthBytes) (*lchtypes.Message, error) {
-	tx := ethtypes.EthCall{
-		From:     nil,
-		To:       eaddr,
-		Gas:      0,
-		GasPrice: ethtypes.EthBigInt{},
-		Value:    ethtypes.EthBigInt{},
-		Data:     edata,
-	}
-	filMsg, err := ethCallToFilecoinMessage(tx)
-	if err != nil {
-		return nil, xerrors.Errorf("unable to convert ethcall to filecoin message: %w", err)
-	}
-
-	return filMsg, nil
-}
-
-func ethCallToFilecoinMessage(tx ethtypes.EthCall) (*lchtypes.Message, error) {
-	var from filaddr.Address
-	if tx.From == nil || *tx.From == (ethtypes.EthAddress{}) {
-		// Send from the filecoin "system" address.
-		var err error
-		from, err = (ethtypes.EthAddress{}).ToFilecoinAddress()
-		if err != nil {
-			return nil, fmt.Errorf("failed to construct the ethereum system address: %w", err)
-		}
-	} else {
-		// The from address must be translatable to an f4 address.
-		var err error
-		from, err = tx.From.ToFilecoinAddress()
-		if err != nil {
-			return nil, fmt.Errorf("failed to translate sender address (%s): %w", tx.From.String(), err)
-		}
-		if p := from.Protocol(); p != filaddr.Delegated {
-			return nil, fmt.Errorf("expected a class 4 address, got: %d: %w", p, err)
-		}
-	}
-
-	var params []byte
-	if len(tx.Data) > 0 {
-		initcode := abi.CborBytes(tx.Data)
-		params2, err := actors.SerializeParams(&initcode)
-		if err != nil {
-			return nil, fmt.Errorf("failed to serialize params: %w", err)
-		}
-		params = params2
-	}
-
-	var to filaddr.Address
-	var method abi.MethodNum
-	if tx.To == nil {
-		// this is a contract creation
-		to = filbuiltin.EthereumAddressManagerActorAddr
-		method = filbuiltin.MethodsEAM.CreateExternal
-	} else {
-		addr, err := tx.To.ToFilecoinAddress()
-		if err != nil {
-			return nil, xerrors.Errorf("cannot get Filecoin address: %w", err)
-		}
-		to = addr
-		method = filbuiltin.MethodsEVM.InvokeContract
-	}
-
-	return &lchtypes.Message{
-		From:       from,
-		To:         to,
-		Value:      filbig.Int(tx.Value),
-		Method:     method,
-		Params:     params,
-		GasLimit:   build.BlockGasLimit,
-		GasFeeCap:  filbig.Zero(),
-		GasPremium: filbig.Zero(),
-	}, nil
-}
-
-func newFilStateReader(bsrc ipldcbor.IpldBlockstore) (*lchstmgr.StateManager, error) {
-	ebs := NewEphemeralBlockstore(bsrc)
+func newFilStateManager(bsrc ipldcbor.IpldBlockstore) (*lchstmgr.StateManager, error) {
 	mds := dssync.MutexWrap(ds.NewMapDatastore())
 	c := cid.MustParse("bafy2bzacecnamqgqmifpluoeldx7zzglxcljo6oja4vrmtj7432rphldpdmm2")
 	err := mds.Put(context.TODO(), ds.NewKey("0"), c.Bytes())
@@ -397,9 +319,14 @@ func newFilStateReader(bsrc ipldcbor.IpldBlockstore) (*lchstmgr.StateManager, er
 		return nil, err
 	}
 
+	fbs := ipld.FallbackBs{
+		Blockstore:  lbs.FromDatastore(dssync.MutexWrap(mds)),
+		FallbackGet: func(ctx context.Context, c cid.Cid) (blkfmt.Block, error) { return bsrc.Get(ctx, c) },
+	}
+
 	cs := chainstore.NewChainStore(
-		ebs,
-		ebs,
+		fbs,
+		fbs,
 		mds,
 		nil,
 		nil,

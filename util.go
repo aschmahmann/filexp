@@ -1,27 +1,16 @@
 package main
 
 import (
-	"bytes"
-	"context"
-	"os"
-	"sync"
-	"time"
+	"regexp"
+	"strings"
 
 	"code.riba.cloud/go/toolbox-interplanetary/fil"
-	filaddr "github.com/filecoin-project/go-address"
-	filhamt "github.com/filecoin-project/go-hamt-ipld/v3"
-	filbuiltin "github.com/filecoin-project/go-state-types/builtin"
-	filstore "github.com/filecoin-project/go-state-types/store"
-	lchstate "github.com/filecoin-project/lotus/chain/state"
+	"github.com/aschmahmann/filexp/internal/bitswap"
+	ipld "github.com/aschmahmann/filexp/internal/ipld"
+	filabi "github.com/filecoin-project/go-state-types/abi"
 	lchtypes "github.com/filecoin-project/lotus/chain/types"
-	blkfmt "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
-	ipldcbor "github.com/ipfs/go-ipld-cbor"
-	"github.com/ipld/go-car/v2"
-	carbs "github.com/ipld/go-car/v2/blockstore"
-	caridx "github.com/ipld/go-car/v2/index"
-	"github.com/minio/sha256-simd"
-	cbg "github.com/whyrusleeping/cbor-gen"
+	"github.com/urfave/cli/v2"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/xerrors"
 
@@ -38,217 +27,135 @@ func stringSliceMap(ss []string, f func(string) string) []string {
 	return ssout
 }
 
-func lookupID(cbs *ipldcbor.BasicIpldStore, ts *lchtypes.TipSet, addr filaddr.Address) (filaddr.Address, error) {
-	if addr.Protocol() == filaddr.ID {
-		return addr, nil
-	}
-	stateTree, err := lchstate.LoadStateTree(cbs, ts.ParentState())
-	if err != nil {
-		return filaddr.Undef, err
-	}
-	return stateTree.LookupIDAddress(addr)
-}
+func getAnchorPoint(cctx *cli.Context) (*ipld.CountingBlockGetter, *lchtypes.TipSet, error) {
+	sourceSelect := []string{"car", "rpc-endpoint", "rpc-fullnode"}
 
-func loadStateRoot(ctx context.Context, cbs *ipldcbor.BasicIpldStore, ts *lchtypes.TipSet) (*lchtypes.StateRoot, error) {
-	var root lchtypes.StateRoot
-	if err := filstore.WrapStore(ctx, cbs).Get(ctx, ts.ParentState(), &root); err != nil {
-		return nil, err
-	}
-
-	return &root, nil
-}
-
-func iterateActors(ctx context.Context, cbs *ipldcbor.BasicIpldStore, ts *lchtypes.TipSet, cb func(actorID filaddr.Address, actor lchtypes.Actor) error) error {
-	sr, err := loadStateRoot(ctx, cbs, ts)
-	if err != nil {
-		return err
-	}
-
-	return parallelIterateMap(ctx, cbs, sr.Actors, func(k, vCbor []byte) error {
-		id, err := filaddr.NewFromBytes(k)
-		if err != nil {
-			return xerrors.Errorf("invalid address (%x) found in state tree key: %w", k, err)
+	var countHeadSources int
+	for _, s := range sourceSelect {
+		if cctx.IsSet(s) {
+			countHeadSources++
 		}
-
-		var act lchtypes.Actor
-		if err := (&act).UnmarshalCBOR(bytes.NewReader(vCbor)); err != nil {
-			return err
+	}
+	if countHeadSources == 0 && cctx.Bool("trust-chainlove") {
+		countHeadSources++
+		if err := cctx.Set("rpc-endpoint", chainLoveURL); err != nil {
+			return nil, nil, err
 		}
-
-		return cb(id, act)
-	})
-}
-
-var hamtOpts = []filhamt.Option{
-	filhamt.UseHashFunction(func(input []byte) []byte {
-		res := sha256.Sum256(input)
-		return res[:]
-	}),
-	filhamt.UseTreeBitWidth(filbuiltin.DefaultHamtBitwidth),
-}
-
-func parallelIterateMap(ctx context.Context, cbs *ipldcbor.BasicIpldStore, root cid.Cid, cb func(k, vCbor []byte) error) error {
-	node, err := filhamt.LoadNode(
-		ctx,
-		&getManyCborStore{BasicIpldStore: cbs},
-		root,
-		hamtOpts...,
-	)
-	if err != nil {
-		return err
 	}
 
-	return node.ForEachParallel(ctx, func(k string, v *cbg.Deferred) error {
-		return cb([]byte(k), v.Raw)
-	})
-}
-
-func loadBlockData(ctx context.Context, bg *blockGetter, cids []cid.Cid) ([][]byte, error) {
-	blks := make([][]byte, len(cids))
-	if len(cids) == 0 {
-		return blks, nil
+	if countHeadSources > 1 {
+		return nil, nil, xerrors.Errorf(
+			"you can not specify more than one CurrentTipsetSource of: %s",
+			strings.Join(stringSliceMap(sourceSelect, func(s string) string { return "--" + s }), ", "),
+		)
+	} else if countHeadSources == 0 && !cctx.IsSet("tipset-cids") {
+		return nil, nil, xerrors.Errorf(
+			"you have not specified any CurrentTipsetSource (one of %s), as an alternative you must provide the tipset explicitly via '--tipset-cids'",
+			strings.Join(stringSliceMap(sourceSelect, func(s string) string { return "--" + s }), ", "),
+		)
 	}
 
-	eg, ctx := errgroup.WithContext(ctx)
-	eg.SetLimit(8)
+	rpcAddr := cctx.String("rpc-fullnode")
+	if rpcAddr == "" {
+		rpcAddr = cctx.String("rpc-endpoint")
+	}
 
-	for i := range cids {
-		i := i
-		eg.Go(func() error {
-			b, err := bg.Get(ctx, cids[i])
-			if err != nil {
-				return err
+	ctx := cctx.Context
+	var err error
+	var bg *ipld.CountingBlockGetter
+	var tsk *lchtypes.TipSetKey
+	var ts *lchtypes.TipSet
+
+	// supplied TSK takes precedence
+	if cctx.IsSet("tipset-cids") {
+		cidStrs := cctx.StringSlice("tipset-cids")
+		var cids []cid.Cid
+		for _, s := range cidStrs {
+			// urfave is dumb wrt multi-value flags, do some postprocessing
+			for _, ss := range regexp.MustCompile(`[\s,:;]`).Split(s, -1) {
+				if ss == "" {
+					continue
+				}
+				c, err := cid.Decode(ss)
+				if err != nil {
+					return nil, nil, err
+				}
+				cids = append(cids, c)
 			}
-			blks[i] = b.RawData()
-			return nil
-		})
+		}
+		tskv := lchtypes.NewTipSetKey(cids...)
+		tsk = &tskv
 	}
 
-	return blks, eg.Wait()
-}
-
-func getStateFromCar(ctx context.Context, srcSnapshot string) (*blockGetter, *lchtypes.TipSetKey, error) {
-	start := time.Now()
-
-	carbs, err := blockstoreFromSnapshot(ctx, srcSnapshot)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	log.Infof("duration to load snapshot: %v", time.Since(start))
-
-	carRoots, err := carbs.Roots()
-	if err != nil {
-		return nil, nil, err
-	}
-	tsk := lchtypes.NewTipSetKey(carRoots...)
-
-	return &blockGetter{
-		m:              make(map[cid.Cid]int),
-		IpldBlockstore: carbs,
-	}, &tsk, nil
-}
-
-func blockstoreFromSnapshot(_ context.Context, snapshotFilename string) (*carbs.ReadOnly, error) {
-	carFile := snapshotFilename
-	carFh, err := os.Open(carFile)
-	if err != nil {
-		return nil, xerrors.Errorf("unable to open snapshot car at %s: %w", carFile, err)
-	}
-
-	var idx caridx.Index
-	idxFile := carFile + `.idx`
-	idxFh, err := os.Open(idxFile)
-	if os.IsNotExist(err) {
-		idxFh, err = os.Create(idxFile)
+	if cctx.IsSet("car") {
+		var carTsk *lchtypes.TipSetKey
+		bg, carTsk, err = ipld.GetStateFromCar(ctx, cctx.String("car"))
 		if err != nil {
-			return nil, xerrors.Errorf("unable to create new index %s: %w", idxFile, err)
+			return nil, nil, err
 		}
-
-		log.Infof("generating new index (slow!!!!) at %s", idxFile)
-		idx, err = car.GenerateIndex(carFh)
+		// not forced via --tipset-cids
+		if tsk == nil {
+			tsk = carTsk
+		}
+	} else if rpcAddr != "" {
+		lApi, apiCloser, err := fil.NewLotusDaemonAPIClientV0(ctx, rpcAddr, 0, "")
 		if err != nil {
-			return nil, xerrors.Errorf("car index generation failed: %w", err)
+			return nil, nil, err
 		}
-		if _, err := caridx.WriteTo(idx, idxFh); err != nil {
-			return nil, xerrors.Errorf("writing out car index to %s failed: %w", idxFile, err)
+		go func() {
+			<-ctx.Done()
+			apiCloser()
+		}()
+
+		// not forced via --tipset-cids
+		if tsk == nil {
+			ts, err = fil.GetTipset(ctx, lApi, filabi.ChainEpoch(cctx.Uint("lookback-epochs")))
+			if err != nil {
+				return nil, nil, err
+			}
 		}
 
-		// if I do not do this, NewReadOnly will recognize this is an io.reader, and will
-		// directly try to read from what is now an EOF :(
-		carFh.Seek(0, 0) //nolint:errcheck
-
-	} else if err != nil {
-		return nil, xerrors.Errorf("unable to open snapshot index at %s: %w", idxFile, err)
-	} else if idx, err = caridx.ReadFrom(idxFh); err != nil {
-		return nil, xerrors.Errorf("unable to open preexisting index at %s: %w", idxFile, err)
-	}
-
-	roBs, err := carbs.NewReadOnly(carFh, idx)
-	if err != nil {
-		return nil, xerrors.Errorf("unable to construct blockstore from snapshot and index in %s: %w", carFile, err)
-	}
-
-	return roBs, nil
-}
-
-type blockGetter struct {
-	ipldcbor.IpldBlockstore
-	mx          sync.Mutex
-	firstGet    *time.Time
-	m           map[cid.Cid]int
-	orderedCids []cid.Cid
-}
-
-func (bg *blockGetter) Get(ctx context.Context, cid cid.Cid) (blkfmt.Block, error) {
-	blk, err := bg.IpldBlockstore.Get(ctx, cid)
-	if err != nil {
-		return nil, err
-	}
-
-	bg.mx.Lock()
-	{
-		if bg.firstGet == nil {
-			t := time.Now()
-			bg.firstGet = &t
-		}
-		if _, found := bg.m[cid]; !found {
-			bg.m[cid] = len(blk.RawData())
-			bg.orderedCids = append(bg.orderedCids, cid)
+		// only a full mode RPC can act as a block source
+		if cctx.IsSet("rpc-fullnode") {
+			bg = &ipld.CountingBlockGetter{IpldBlockstore: &ipld.FilRpcBs{Rpc: lApi}}
 		}
 	}
-	bg.mx.Unlock()
 
-	return blk, nil
-}
-
-func (bg *blockGetter) LogStats() {
-	bg.mx.Lock()
-	totalSizeBytes := 0
-	for _, v := range bg.m {
-		totalSizeBytes += v
+	// if no block sources available - fall back to public bitswap
+	if bg == nil {
+		bg, err = bitswap.InitBitswapGetter(ctx)
+		if err != nil {
+			return nil, nil, err
+		}
 	}
-	tsfg := "n/a"
-	if bg.firstGet != nil {
-		tsfg = time.Since(*bg.firstGet).Truncate(time.Millisecond).String()
+
+	if ts == nil {
+		eg, ctx := errgroup.WithContext(ctx)
+		eg.SetLimit(8)
+
+		hdrs := make([]*lchtypes.BlockHeader, len(tsk.Cids()))
+		for i, c := range tsk.Cids() {
+			eg.Go(func() error {
+				b, err := bg.Get(ctx, c)
+				if err != nil {
+					return err
+				}
+				hdrs[i], err = lchtypes.DecodeBlock(b.RawData())
+				return err
+			})
+		}
+
+		if err = eg.Wait(); err != nil {
+			return nil, nil, err
+		}
+
+		ts, err = lchtypes.NewTipSet(hdrs)
+		if err != nil {
+			return nil, nil, err
+		}
 	}
-	log.Infow("blockgetterStats", "blocksCount", len(bg.m), "blocksBytes", totalSizeBytes, "timeSinceFirstGet", tsfg)
-	bg.mx.Unlock()
-}
 
-var _ ipldcbor.IpldBlockstore = &blockGetter{}
+	log.Infof("gathering results from StateRoot %s referenced by tipset at height %d (%s) %s", ts.ParentState(), ts.Height(), fil.ClockMainnet.EpochToTime(ts.Height()), ts.Cids())
 
-type filRpcBs struct {
-	rpc fil.LotusDaemonAPIClientV0
-}
-
-func (frbs *filRpcBs) Put(context.Context, blkfmt.Block) error {
-	return xerrors.New("this is a readonly store")
-}
-func (rbs *filRpcBs) Get(ctx context.Context, c cid.Cid) (blkfmt.Block, error) {
-	d, err := rbs.rpc.ChainReadObj(ctx, c)
-	if err != nil {
-		return nil, err
-	}
-	return blkfmt.NewBlockWithCid(d, c)
+	return bg, ts, nil
 }

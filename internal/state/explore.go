@@ -1,4 +1,4 @@
-package main
+package state
 
 import (
 	"bytes"
@@ -7,6 +7,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/aschmahmann/filexp/internal/ipld"
 	filaddr "github.com/filecoin-project/go-address"
 	filabi "github.com/filecoin-project/go-state-types/abi"
 	filbig "github.com/filecoin-project/go-state-types/big"
@@ -20,18 +21,18 @@ import (
 	ipldcbor "github.com/ipfs/go-ipld-cbor"
 )
 
-func getCoins(ctx context.Context, bg *blockGetter, ts *lchtypes.TipSet, addr filaddr.Address) error {
+func GetCoins(ctx context.Context, bg *ipld.CountingBlockGetter, ts *lchtypes.TipSet, addr filaddr.Address) error {
 	cbs := ipldcbor.NewCborStore(bg)
 	var mx sync.Mutex
 	foundAttoFil := filabi.NewTokenAmount(0)
 
-	actorAddrID, err := lookupID(cbs, ts, addr)
+	actorAddrID, err := LookupID(cbs, ts, addr)
 	if err != nil {
 		return err
 	}
 
 	ast := filstore.WrapStore(ctx, cbs)
-	if err := iterateActors(ctx, cbs, ts, func(actorID filaddr.Address, act lchtypes.Actor) error {
+	if err := IterateActors(ctx, cbs, ts, func(actorID filaddr.Address, act lchtypes.Actor) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
@@ -83,10 +84,10 @@ func getCoins(ctx context.Context, bg *blockGetter, ts *lchtypes.TipSet, addr fi
 	return nil
 }
 
-func getActors(ctx context.Context, bg *blockGetter, ts *lchtypes.TipSet, countOnly bool) error {
+func GetActors(ctx context.Context, bg *ipld.CountingBlockGetter, ts *lchtypes.TipSet, countOnly bool) error {
 	var numActors uint64
 
-	if err := iterateActors(ctx, ipldcbor.NewCborStore(bg), ts, func(actorID filaddr.Address, act lchtypes.Actor) error {
+	if err := IterateActors(ctx, ipldcbor.NewCborStore(bg), ts, func(actorID filaddr.Address, act lchtypes.Actor) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
@@ -103,7 +104,7 @@ func getActors(ctx context.Context, bg *blockGetter, ts *lchtypes.TipSet, countO
 	return nil
 }
 
-func getBalance(_ context.Context, bg *blockGetter, ts *lchtypes.TipSet, addr filaddr.Address) error {
+func GetBalance(_ context.Context, bg *ipld.CountingBlockGetter, ts *lchtypes.TipSet, addr filaddr.Address) error {
 	stateTree, err := lchstate.LoadStateTree(ipldcbor.NewCborStore(bg), ts.ParentState())
 	if err != nil {
 		return err

@@ -5,27 +5,24 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"regexp"
 	"strconv"
-	"strings"
 	"syscall"
 
-	"code.riba.cloud/go/toolbox-interplanetary/fil"
+	filexp "github.com/aschmahmann/filexp/internal"
+	"github.com/aschmahmann/filexp/internal/state"
 	filaddr "github.com/filecoin-project/go-address"
-	filabi "github.com/filecoin-project/go-state-types/abi"
 	filbuiltin "github.com/filecoin-project/go-state-types/builtin"
-	lchtypes "github.com/filecoin-project/lotus/chain/types"
-	"github.com/ipfs/go-cid"
 	logging "github.com/ipfs/go-log/v2"
 	"github.com/urfave/cli/v2"
-	"golang.org/x/xerrors"
 )
 
-var log = logging.Logger(fmt.Sprintf("%s(%d)", "filexp", os.Getpid()))
+var log = filexp.Logger
 
 // 20 is considered good for WdPoST: https://github.com/filecoin-project/builtin-actors/blob/v13.0.0/runtime/src/runtime/policy.rs#L290-L293
 // nevertheless bump to 30 as per https://filecoinproject.slack.com/archives/C02D73MHM63/p1718762303033709?thread_ts=1718693790.469889&cid=C02D73MHM63
 var defaultRpcLookbackEpochs = uint(30)
+
+const chainLoveURL = "https://api.chain.love/"
 
 var stateFlags = []cli.Flag{
 	&cli.PathFlag{
@@ -87,7 +84,7 @@ func main() {
 					}
 					defer bg.LogStats()
 
-					return getBalance(cctx.Context, bg, ts, actorAddr)
+					return state.GetBalance(cctx.Context, bg, ts, actorAddr)
 				},
 			},
 			{
@@ -120,7 +117,7 @@ func main() {
 					}
 					defer bg.LogStats()
 
-					return getCoins(cctx.Context, bg, ts, signerAddr)
+					return state.GetCoins(cctx.Context, bg, ts, signerAddr)
 				},
 			},
 			{
@@ -140,7 +137,7 @@ func main() {
 					}
 					defer bg.LogStats()
 
-					return getActors(cctx.Context, bg, ts, cctx.Bool("count-only"))
+					return state.GetActors(cctx.Context, bg, ts, cctx.Bool("count-only"))
 				},
 			},
 			{
@@ -190,136 +187,4 @@ func main() {
 		log.Fatalf("%+v", err)
 		os.Exit(1)
 	}
-}
-
-const chainLoveURL = "https://api.chain.love/"
-
-func getAnchorPoint(cctx *cli.Context) (*blockGetter, *lchtypes.TipSet, error) {
-	sourceSelect := []string{"car", "rpc-endpoint", "rpc-fullnode"}
-
-	var countHeadSources int
-	for _, s := range sourceSelect {
-		if cctx.IsSet(s) {
-			countHeadSources++
-		}
-	}
-	if countHeadSources == 0 && cctx.Bool("trust-chainlove") {
-		countHeadSources++
-		if err := cctx.Set("rpc-endpoint", chainLoveURL); err != nil {
-			return nil, nil, err
-		}
-	}
-
-	if countHeadSources > 1 {
-		return nil, nil, xerrors.Errorf(
-			"you can not specify more than one CurrentTipsetSource of: %s",
-			strings.Join(stringSliceMap(sourceSelect, func(s string) string { return "--" + s }), ", "),
-		)
-	} else if countHeadSources == 0 && !cctx.IsSet("tipset-cids") {
-		return nil, nil, xerrors.Errorf(
-			"you have not specified any CurrentTipsetSource (one of %s), as an alternative you must provide the tipset explicitly via '--tipset-cids'",
-			strings.Join(stringSliceMap(sourceSelect, func(s string) string { return "--" + s }), ", "),
-		)
-	}
-
-	rpcAddr := cctx.String("rpc-fullnode")
-	if rpcAddr == "" {
-		rpcAddr = cctx.String("rpc-endpoint")
-	}
-
-	ctx := cctx.Context
-	var err error
-	var bg *blockGetter
-	var tsk *lchtypes.TipSetKey
-	var ts *lchtypes.TipSet
-
-	// supplied TSK takes precedence
-	if cctx.IsSet("tipset-cids") {
-		cidStrs := cctx.StringSlice("tipset-cids")
-		var cids []cid.Cid
-		for _, s := range cidStrs {
-			// urfave is dumb wrt multi-value flags, do some postprocessing
-			for _, ss := range regexp.MustCompile(`[\s,:;]`).Split(s, -1) {
-				if ss == "" {
-					continue
-				}
-				c, err := cid.Decode(ss)
-				if err != nil {
-					return nil, nil, err
-				}
-				cids = append(cids, c)
-			}
-		}
-		tskv := lchtypes.NewTipSetKey(cids...)
-		tsk = &tskv
-	}
-
-	if cctx.IsSet("car") {
-		var carTsk *lchtypes.TipSetKey
-		bg, carTsk, err = getStateFromCar(ctx, cctx.String("car"))
-		if err != nil {
-			return nil, nil, err
-		}
-		// not forced via --tipset-cids
-		if tsk == nil {
-			tsk = carTsk
-		}
-	} else if rpcAddr != "" {
-		lApi, apiCloser, err := fil.NewLotusDaemonAPIClientV0(ctx, rpcAddr, 0, "")
-		if err != nil {
-			return nil, nil, err
-		}
-		go func() {
-			<-ctx.Done()
-			apiCloser()
-		}()
-
-		// not forced via --tipset-cids
-		if tsk == nil {
-			ts, err = fil.GetTipset(ctx, lApi, filabi.ChainEpoch(cctx.Uint("lookback-epochs")))
-			if err != nil {
-				return nil, nil, err
-			}
-		}
-
-		// only a full mode RPC can act as a block source
-		if cctx.IsSet("rpc-fullnode") {
-			bg = &blockGetter{
-				m:              make(map[cid.Cid]int),
-				IpldBlockstore: &filRpcBs{lApi},
-			}
-		}
-	}
-
-	// if no block sources available - fall back to public bitswap
-	if bg == nil {
-		bg, err = initBitswapGetter(ctx)
-		if err != nil {
-			return nil, nil, err
-		}
-	}
-
-	if ts == nil {
-		blkData, err := loadBlockData(ctx, bg, tsk.Cids())
-		if err != nil {
-			return nil, nil, err
-		}
-
-		hdrs := make([]*lchtypes.BlockHeader, len(blkData))
-		for i := range blkData {
-			hdrs[i], err = lchtypes.DecodeBlock(blkData[i])
-			if err != nil {
-				return nil, nil, err
-			}
-		}
-
-		ts, err = lchtypes.NewTipSet(hdrs)
-		if err != nil {
-			return nil, nil, err
-		}
-	}
-
-	log.Infof("gathering results from StateRoot %s referenced by tipset at height %d (%s) %s", ts.ParentState(), ts.Height(), fil.ClockMainnet.EpochToTime(ts.Height()), ts.Cids())
-
-	return bg, ts, nil
 }

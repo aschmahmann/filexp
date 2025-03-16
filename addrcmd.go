@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 
+	"github.com/aschmahmann/filexp/internal/state"
 	"github.com/filecoin-project/go-address"
 	"github.com/filecoin-project/go-state-types/abi"
 	"github.com/filecoin-project/lotus/chain/types/ethtypes"
@@ -36,7 +37,7 @@ func filToEthAddr(cctx *cli.Context) error {
 	}
 	defer bg.LogStats()
 
-	idAddr, err := lookupID(ipldcbor.NewCborStore(bg), ts, addr)
+	idAddr, err := state.LookupID(ipldcbor.NewCborStore(bg), ts, addr)
 	if err != nil {
 		return err
 	}
@@ -82,7 +83,7 @@ func filAddrs(cctx *cli.Context) error {
 	}
 	defer bg.LogStats()
 
-	idAddr, err := lookupID(ipldcbor.NewCborStore(bg), ts, addr)
+	idAddr, err := state.LookupID(ipldcbor.NewCborStore(bg), ts, addr)
 	if err != nil {
 		return err
 	}
