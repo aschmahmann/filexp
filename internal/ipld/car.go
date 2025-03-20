@@ -15,7 +15,7 @@ import (
 func GetStateFromCar(ctx context.Context, srcSnapshot string) (*CountingBlockGetter, *lchtypes.TipSetKey, error) {
 	start := time.Now()
 
-	carbs, err := blockstoreFromSnapshot(ctx, srcSnapshot)
+	carbs, err := blockstoreFromSnapshot(srcSnapshot)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -28,10 +28,17 @@ func GetStateFromCar(ctx context.Context, srcSnapshot string) (*CountingBlockGet
 	}
 	tsk := lchtypes.NewTipSetKey(carRoots...)
 
+	// Enable cancelation of tight loops reading from a car file:
+	// closing will result in errors from this point on
+	go func() {
+		<-ctx.Done()
+		carbs.Close()
+	}()
+
 	return &CountingBlockGetter{IpldBlockstore: carbs}, &tsk, nil
 }
 
-func blockstoreFromSnapshot(_ context.Context, snapshotFilename string) (*carbs.ReadOnly, error) {
+func blockstoreFromSnapshot(snapshotFilename string) (*carbs.ReadOnly, error) {
 	carFile := snapshotFilename
 	carFh, err := os.Open(carFile)
 	if err != nil {
