@@ -4,7 +4,7 @@ import (
 	"context"
 
 	bsclient "github.com/ipfs/boxo/bitswap/client"
-	bsnet "github.com/ipfs/boxo/bitswap/network"
+	"github.com/ipfs/boxo/bitswap/network/bsnet"
 	"github.com/ipfs/boxo/blockstore"
 	rc "github.com/ipfs/boxo/routing/http/client"
 	contentrouter "github.com/ipfs/boxo/routing/http/contentrouter"

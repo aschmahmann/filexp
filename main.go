@@ -68,6 +68,7 @@ func main() {
 		"routing/http/contentrouter",
 		"net/identify",
 		"bs:sess",
+		"bitswap/bsnet",
 		"bitswap/session",
 		"bitswap_network",
 		"bitswap/network",

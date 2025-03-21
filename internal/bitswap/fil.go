@@ -6,7 +6,7 @@ import (
 
 	lbuild "github.com/filecoin-project/lotus/build"
 	bsclient "github.com/ipfs/boxo/bitswap/client"
-	bsnet "github.com/ipfs/boxo/bitswap/network"
+	"github.com/ipfs/boxo/bitswap/network/bsnet"
 	"github.com/ipfs/boxo/blockstore"
 	"github.com/ipfs/boxo/ipns"
 	"github.com/ipfs/go-datastore"
