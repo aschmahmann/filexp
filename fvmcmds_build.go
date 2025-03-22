@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"code.riba.cloud/go/toolbox-interplanetary/fil"
-	"github.com/aschmahmann/filexp/internal/eth"
 	"github.com/aschmahmann/filexp/internal/ipld"
 	"github.com/filecoin-project/go-jsonrpc"
 	"github.com/filecoin-project/go-state-types/abi"
@@ -219,7 +218,7 @@ func (e *ethRpcResolver) Call(ctx context.Context, eaddr ethtypes.EthAddress, me
 		e.tsMx.Unlock()
 	}
 
-	filMsg, err := eth.PrepFevmRequest(&eaddr, methodData)
+	filMsg, err := (&ethtypes.EthCall{To: &eaddr, Data: methodData}).ToFilecoinMessage()
 	if err != nil {
 		return nil, err
 	}
@@ -238,7 +237,7 @@ func (e *ethRpcResolver) Call(ctx context.Context, eaddr ethtypes.EthAddress, me
 }
 
 func fevmExec(ctx context.Context, bg *ipld.CountingBlockGetter, ts *lchtypes.TipSet, eaddr *ethtypes.EthAddress, edata ethtypes.EthBytes, outputCAR string) error {
-	filMsg, err := eth.PrepFevmRequest(eaddr, edata)
+	filMsg, err := (&ethtypes.EthCall{To: eaddr, Data: edata}).ToFilecoinMessage()
 	if err != nil {
 		return err
 	}
