@@ -13,6 +13,14 @@ import (
 	"golang.org/x/xerrors"
 )
 
+func GetActorGeneric(cbs ipldcbor.IpldStore, ts *lchtypes.TipSet, addr filaddr.Address) (*lchtypes.Actor, error) {
+	st, err := lchstate.LoadStateTree(cbs, ts.ParentState())
+	if err != nil {
+		return nil, err
+	}
+	return st.GetActor(addr)
+}
+
 func LookupID(cbs ipldcbor.IpldStore, ts *lchtypes.TipSet, addr filaddr.Address) (filaddr.Address, error) {
 	if addr.Protocol() == filaddr.ID {
 		return addr, nil

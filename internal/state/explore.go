@@ -12,12 +12,9 @@ import (
 	filabi "github.com/filecoin-project/go-state-types/abi"
 	filbig "github.com/filecoin-project/go-state-types/big"
 	filstore "github.com/filecoin-project/go-state-types/store"
-
 	lbi "github.com/filecoin-project/lotus/chain/actors/builtin"
 	lbimsig "github.com/filecoin-project/lotus/chain/actors/builtin/multisig"
-	lchstate "github.com/filecoin-project/lotus/chain/state"
 	lchtypes "github.com/filecoin-project/lotus/chain/types"
-
 	ipldcbor "github.com/ipfs/go-ipld-cbor"
 )
 
@@ -105,11 +102,7 @@ func GetActors(ctx context.Context, bg *ipld.CountingBlockGetter, ts *lchtypes.T
 }
 
 func GetBalance(_ context.Context, bg *ipld.CountingBlockGetter, ts *lchtypes.TipSet, addr filaddr.Address) error {
-	stateTree, err := lchstate.LoadStateTree(ipldcbor.NewCborStore(bg), ts.ParentState())
-	if err != nil {
-		return err
-	}
-	act, err := stateTree.GetActor(addr)
+	act, err := GetActorGeneric(ipldcbor.NewCborStore(bg), ts, addr)
 	if err != nil {
 		return err
 	}
