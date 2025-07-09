@@ -172,11 +172,11 @@ func writeWorker(ctx context.Context, in <-chan []byte, out io.Writer, asSingleD
 	}()
 
 	if asSingleDocument {
-		if _, err := buf.Write([]byte(`{"id":1,"jsonrpc":"2.0","result":{`)); err != nil {
+		if _, err := buf.Write([]byte(`{`)); err != nil {
 			return err
 		}
 		defer func() {
-			_, err := buf.Write([]byte("}}\n"))
+			_, err := buf.Write([]byte("}\n"))
 			if defErr == nil {
 				defErr = err
 			}
