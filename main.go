@@ -53,8 +53,9 @@ var stateFlags = []cli.Flag{
 		),
 	},
 	&cli.BoolFlag{
-		Name:  "trust-chainlove",
-		Usage: "Equivalent to --rpc-endpoint=https://api.chain.love",
+		Name:               "trust-chainlove",
+		Usage:              "Equivalent to --rpc-endpoint=https://api.chain.love",
+		DisableDefaultText: true,
 	},
 }
 
@@ -146,9 +147,9 @@ func main() {
 				Description: "List all actors",
 				Flags: append([]cli.Flag{
 					&cli.BoolFlag{
-						Name:        "count-only",
-						Value:       false,
-						DefaultText: "will not emit the actor IDs, and just count them",
+						Name:               "count-only",
+						Usage:              "will not emit the actor IDs, and just count them",
+						DisableDefaultText: true,
 					},
 				}, stateFlags...),
 				Action: func(cctx *cli.Context) error {
@@ -166,9 +167,9 @@ func main() {
 				Description: "Write legacy f05 state to STDOUT, semanitcally identical to FilRPC.StateMarketDeals()",
 				Flags: append([]cli.Flag{
 					&cli.BoolFlag{
-						Name:        "single-document",
-						Value:       false,
-						DefaultText: "emit an inefficient single JSON object identical to result of StateMarketDeals",
+						Name:               "single-document",
+						Usage:              "emit an inefficient single JSON object identical to FilRPC.StateMarketDeals.{Result}",
+						DisableDefaultText: true,
 					},
 				}, stateFlags...),
 				Action: func(cctx *cli.Context) error {
