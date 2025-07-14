@@ -12,7 +12,7 @@ import (
 	"golang.org/x/xerrors"
 )
 
-func GetStateFromCar(ctx context.Context, srcSnapshot string) (*CountingBlockGetter, *lchtypes.TipSetKey, error) {
+func GetStateFromCar(ctx context.Context, srcSnapshot string, useFullCBG bool) (CountingBlockGetter, *lchtypes.TipSetKey, error) {
 	start := time.Now()
 
 	carbs, err := blockstoreFromSnapshot(srcSnapshot)
@@ -35,7 +35,10 @@ func GetStateFromCar(ctx context.Context, srcSnapshot string) (*CountingBlockGet
 		carbs.Close()
 	}()
 
-	return &CountingBlockGetter{IpldBlockstore: carbs}, &tsk, nil
+	if useFullCBG {
+		return &FullCBG{IpldBlockstore: carbs}, &tsk, nil
+	}
+	return &LiteCBG{IpldBlockstore: carbs}, &tsk, nil
 }
 
 func blockstoreFromSnapshot(snapshotFilename string) (*carbs.ReadOnly, error) {

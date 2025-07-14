@@ -57,6 +57,10 @@ var stateFlags = []cli.Flag{
 		Usage:              "Equivalent to --rpc-endpoint=https://api.chain.love",
 		DisableDefaultText: true,
 	},
+	&cli.BoolFlag{
+		Name:  "count-unique-cids",
+		Usage: "Keep track of all CIDs seen, can be memory intensive",
+	},
 }
 
 func main() {
@@ -100,7 +104,7 @@ func main() {
 						return err
 					}
 
-					bg, ts, err := getAnchorPoint(cctx)
+					bg, ts, err := getAnchorPoint(cctx, cctx.Bool("count-unique-cids"))
 					if err != nil {
 						return err
 					}
@@ -133,7 +137,7 @@ func main() {
 					if err != nil {
 						return err
 					}
-					bg, ts, err := getAnchorPoint(cctx)
+					bg, ts, err := getAnchorPoint(cctx, cctx.Bool("count-unique-cids"))
 					if err != nil {
 						return err
 					}
@@ -153,7 +157,7 @@ func main() {
 					},
 				}, stateFlags...),
 				Action: func(cctx *cli.Context) error {
-					bg, ts, err := getAnchorPoint(cctx)
+					bg, ts, err := getAnchorPoint(cctx, cctx.Bool("count-unique-cids"))
 					if err != nil {
 						return err
 					}
@@ -177,7 +181,7 @@ func main() {
 						return xerrors.New("dumping to terminal is not supported - redirect the output to file or pipe")
 					}
 
-					bg, ts, err := getAnchorPoint(cctx)
+					bg, ts, err := getAnchorPoint(cctx, cctx.Bool("count-unique-cids"))
 					if err != nil {
 						return err
 					}

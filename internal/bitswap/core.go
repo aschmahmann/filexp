@@ -23,7 +23,7 @@ import (
 
 var log = filexp.Logger
 
-func InitBitswapGetter(ctx context.Context) (*ipld.CountingBlockGetter, error) {
+func InitBitswapGetter(ctx context.Context, useFullCBG bool) (ipld.CountingBlockGetter, error) {
 	start := time.Now()
 	defer func() {
 		log.Infof("duration to setup bitswap fetching: %v", time.Since(start))
@@ -52,11 +52,17 @@ func InitBitswapGetter(ctx context.Context) (*ipld.CountingBlockGetter, error) {
 		bscFil.NewSession(ctx),
 		bscIpfs.NewSession(ctx),
 	}
-	bg := &ipld.CountingBlockGetter{
-		IpldBlockstore: &bservWrapper{
-			IpldBlockstore: blockstore.NewBlockstore(lds),
-			bserv:          cf,
-		},
+
+	var bg ipld.CountingBlockGetter
+	bsw := &bservWrapper{
+		IpldBlockstore: blockstore.NewBlockstore(lds),
+		bserv:          cf,
+	}
+
+	if useFullCBG {
+		bg = &ipld.FullCBG{IpldBlockstore: bsw}
+	} else {
+		bg = &ipld.LiteCBG{IpldBlockstore: bsw}
 	}
 
 	go func() {
@@ -98,7 +104,8 @@ func InitBitswapGetter(ctx context.Context) (*ipld.CountingBlockGetter, error) {
 					"peersIpfsBS", nPeersWithIpfsBitswap,
 					"wantsIpfsBS", nwantsIpfs,
 					"blksFromIpfsBS", nIpfsBlks,
-					"blksTotal", bg.UniqueBlockCount(),
+					"blksTotal", bg.TotalBlockCount(),
+					"blksUnique", bg.UniqueBlockCount(),
 				)
 			}
 		}

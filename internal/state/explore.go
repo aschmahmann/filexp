@@ -18,7 +18,7 @@ import (
 	ipldcbor "github.com/ipfs/go-ipld-cbor"
 )
 
-func GetCoins(ctx context.Context, bg *ipld.CountingBlockGetter, ts *lchtypes.TipSet, addr filaddr.Address) error {
+func GetCoins(ctx context.Context, bg ipld.CountingBlockGetter, ts *lchtypes.TipSet, addr filaddr.Address) error {
 	cbs := ipldcbor.NewCborStore(bg)
 	var mx sync.Mutex
 	foundAttoFil := filabi.NewTokenAmount(0)
@@ -81,7 +81,7 @@ func GetCoins(ctx context.Context, bg *ipld.CountingBlockGetter, ts *lchtypes.Ti
 	return nil
 }
 
-func GetActors(ctx context.Context, bg *ipld.CountingBlockGetter, ts *lchtypes.TipSet, countOnly bool) error {
+func GetActors(ctx context.Context, bg ipld.CountingBlockGetter, ts *lchtypes.TipSet, countOnly bool) error {
 	var numActors uint64
 
 	if err := IterateActors(ctx, ipldcbor.NewCborStore(bg), ts, func(actorID filaddr.Address, act lchtypes.Actor) error {
@@ -101,7 +101,7 @@ func GetActors(ctx context.Context, bg *ipld.CountingBlockGetter, ts *lchtypes.T
 	return nil
 }
 
-func GetBalance(_ context.Context, bg *ipld.CountingBlockGetter, ts *lchtypes.TipSet, addr filaddr.Address) error {
+func GetBalance(_ context.Context, bg ipld.CountingBlockGetter, ts *lchtypes.TipSet, addr filaddr.Address) error {
 	act, err := GetActorGeneric(ipldcbor.NewCborStore(bg), ts, addr)
 	if err != nil {
 		return err

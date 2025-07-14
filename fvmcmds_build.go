@@ -47,7 +47,7 @@ func cmdFevmExec(cctx *cli.Context) error {
 		return xerrors.Errorf("could not decode hex bytes: %w", err)
 	}
 
-	bg, ts, err := getAnchorPoint(cctx)
+	bg, ts, err := getAnchorPoint(cctx, true) // force FullCBG
 	if err != nil {
 		return err
 	}
@@ -69,7 +69,7 @@ func cmdFevmDaemon(cctx *cli.Context) error {
 		return err
 	}
 
-	bg, ts, err := getAnchorPoint(cctx)
+	bg, ts, err := getAnchorPoint(cctx, true) // force FullCBG
 	if err != nil {
 		return err
 	}
@@ -236,7 +236,7 @@ func (e *ethRpcResolver) Call(ctx context.Context, eaddr ethtypes.EthAddress, me
 	return ret, nil
 }
 
-func fevmExec(ctx context.Context, bg *ipld.CountingBlockGetter, ts *lchtypes.TipSet, eaddr *ethtypes.EthAddress, edata ethtypes.EthBytes, outputCAR string) error {
+func fevmExec(ctx context.Context, bg ipld.CountingBlockGetter, ts *lchtypes.TipSet, eaddr *ethtypes.EthAddress, edata ethtypes.EthBytes, outputCAR string) error {
 	filMsg, err := (&ethtypes.EthCall{To: eaddr, Data: edata}).ToFilecoinMessage()
 	if err != nil {
 		return err

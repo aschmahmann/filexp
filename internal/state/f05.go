@@ -25,7 +25,7 @@ type deal struct {
 	proposal *lchmarket.DealProposal
 }
 
-func DumpStateF05(ctx context.Context, bg *ipld.CountingBlockGetter, ts *lchtypes.TipSet, outFh io.Writer, asSingleDocument bool) (defErr error) {
+func DumpStateF05(ctx context.Context, bg ipld.CountingBlockGetter, ts *lchtypes.TipSet, outFh io.Writer, asSingleDocument bool) (defErr error) {
 
 	//
 	// Setup various chain access

@@ -31,7 +31,7 @@ func filToEthAddr(cctx *cli.Context) error {
 		return fmt.Errorf("error unsupported address type %v", p)
 	}
 
-	bg, ts, err := getAnchorPoint(cctx)
+	bg, ts, err := getAnchorPoint(cctx, cctx.Bool("count-unique-cids"))
 	if err != nil {
 		return err
 	}
@@ -77,7 +77,7 @@ func filAddrs(cctx *cli.Context) error {
 		}
 	}
 
-	bg, ts, err := getAnchorPoint(cctx)
+	bg, ts, err := getAnchorPoint(cctx, cctx.Bool("count-unique-cids"))
 	if err != nil {
 		return err
 	}

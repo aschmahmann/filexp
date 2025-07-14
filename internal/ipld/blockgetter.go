@@ -2,6 +2,7 @@ package ipld
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -13,17 +14,71 @@ import (
 
 var log = filexp.Logger
 
-type CountingBlockGetter struct {
+type CountingBlockGetter interface {
+	ipldcbor.IpldBlockstore
+	LogStats()
+	TotalBlockCount() int64
+	UniqueBlockCount() string
+	OrderedCids() []cid.Cid
+}
+
+type LiteCBG struct {
+	ipldcbor.IpldBlockstore
+	mx       sync.Mutex
+	firstGet *time.Time
+	getCount int64
+}
+
+func (bg *LiteCBG) Get(ctx context.Context, c cid.Cid) (blkfmt.Block, error) {
+	blk, err := bg.IpldBlockstore.Get(ctx, c)
+	if err != nil {
+		return nil, err
+	}
+
+	bg.mx.Lock()
+	{
+		if bg.firstGet == nil {
+			t := time.Now()
+			bg.firstGet = &t
+		}
+		bg.getCount++
+	}
+	bg.mx.Unlock()
+
+	return blk, nil
+}
+
+func (bg *LiteCBG) LogStats() {
+	bg.mx.Lock()
+	defer bg.mx.Unlock()
+
+	tsfg := "n/a"
+	if bg.firstGet != nil {
+		tsfg = time.Since(*bg.firstGet).Truncate(time.Millisecond).String()
+	}
+	log.Infow("blockgetterStats", "blocksTotal", bg.getCount, "timeSinceFirstGet", tsfg)
+}
+
+func (bg *LiteCBG) TotalBlockCount() int64 {
+	bg.mx.Lock()
+	defer bg.mx.Unlock()
+
+	return bg.getCount
+}
+
+func (bg *LiteCBG) UniqueBlockCount() string { return "n/a" }
+func (bg *LiteCBG) OrderedCids() []cid.Cid   { return nil }
+
+type FullCBG struct {
 	ipldcbor.IpldBlockstore
 	mx          sync.Mutex
 	firstGet    *time.Time
+	getCount    int64
 	m           map[cid.Cid]int
 	orderedCids []cid.Cid
 }
 
-var _ ipldcbor.IpldBlockstore = &CountingBlockGetter{}
-
-func (bg *CountingBlockGetter) Get(ctx context.Context, c cid.Cid) (blkfmt.Block, error) {
+func (bg *FullCBG) Get(ctx context.Context, c cid.Cid) (blkfmt.Block, error) {
 	blk, err := bg.IpldBlockstore.Get(ctx, c)
 	if err != nil {
 		return nil, err
@@ -40,35 +95,45 @@ func (bg *CountingBlockGetter) Get(ctx context.Context, c cid.Cid) (blkfmt.Block
 			bg.m[c] = len(blk.RawData())
 			bg.orderedCids = append(bg.orderedCids, c)
 		}
+		bg.getCount++
 	}
 	bg.mx.Unlock()
 
 	return blk, nil
 }
 
-func (bg *CountingBlockGetter) LogStats() {
+func (bg *FullCBG) LogStats() {
 	bg.mx.Lock()
-	totalSizeBytes := 0
+	defer bg.mx.Unlock()
+
+	uniqueSizeBytes := 0
 	for _, v := range bg.m {
-		totalSizeBytes += v
+		uniqueSizeBytes += v
 	}
 	tsfg := "n/a"
 	if bg.firstGet != nil {
 		tsfg = time.Since(*bg.firstGet).Truncate(time.Millisecond).String()
 	}
-	log.Infow("blockgetterStats", "blocksCount", len(bg.m), "blocksBytes", totalSizeBytes, "timeSinceFirstGet", tsfg)
-	bg.mx.Unlock()
+	log.Infow("blockgetterStats", "blocksTotal", bg.getCount, "blocksUnique", len(bg.m), "uniqueBytes", uniqueSizeBytes, "timeSinceFirstGet", tsfg)
 }
 
-func (bg *CountingBlockGetter) UniqueBlockCount() (cnt int) {
-	bg.mx.Lock()
-	cnt = len(bg.m)
-	bg.mx.Unlock()
-	return
-}
-
-func (bg *CountingBlockGetter) OrderedCids() []cid.Cid {
+func (bg *FullCBG) TotalBlockCount() int64 {
 	bg.mx.Lock()
 	defer bg.mx.Unlock()
+
+	return bg.getCount
+}
+
+func (bg *FullCBG) UniqueBlockCount() string {
+	bg.mx.Lock()
+	defer bg.mx.Unlock()
+
+	return fmt.Sprintf("%d", len(bg.m))
+}
+
+func (bg *FullCBG) OrderedCids() []cid.Cid {
+	bg.mx.Lock()
+	defer bg.mx.Unlock()
+
 	return bg.orderedCids
 }

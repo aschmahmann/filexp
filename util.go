@@ -27,7 +27,7 @@ func stringSliceMap(ss []string, f func(string) string) []string {
 	return ssout
 }
 
-func getAnchorPoint(cctx *cli.Context) (*ipld.CountingBlockGetter, *lchtypes.TipSet, error) {
+func getAnchorPoint(cctx *cli.Context, useFullCBG bool) (ipld.CountingBlockGetter, *lchtypes.TipSet, error) {
 	sourceSelect := []string{"car", "rpc-endpoint", "rpc-fullnode"}
 
 	var countHeadSources int
@@ -62,7 +62,7 @@ func getAnchorPoint(cctx *cli.Context) (*ipld.CountingBlockGetter, *lchtypes.Tip
 
 	ctx := cctx.Context
 	var err error
-	var bg *ipld.CountingBlockGetter
+	var bg ipld.CountingBlockGetter
 	var tsk *lchtypes.TipSetKey
 	var ts *lchtypes.TipSet
 
@@ -89,7 +89,7 @@ func getAnchorPoint(cctx *cli.Context) (*ipld.CountingBlockGetter, *lchtypes.Tip
 
 	if cctx.IsSet("car") {
 		var carTsk *lchtypes.TipSetKey
-		bg, carTsk, err = ipld.GetStateFromCar(ctx, cctx.String("car"))
+		bg, carTsk, err = ipld.GetStateFromCar(ctx, cctx.String("car"), useFullCBG)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -117,13 +117,17 @@ func getAnchorPoint(cctx *cli.Context) (*ipld.CountingBlockGetter, *lchtypes.Tip
 
 		// only a full mode RPC can act as a block source
 		if cctx.IsSet("rpc-fullnode") {
-			bg = &ipld.CountingBlockGetter{IpldBlockstore: &ipld.FilRpcBs{Rpc: lApi}}
+			if useFullCBG {
+				bg = &ipld.FullCBG{IpldBlockstore: &ipld.FilRpcBs{Rpc: lApi}}
+			} else {
+				bg = &ipld.LiteCBG{IpldBlockstore: &ipld.FilRpcBs{Rpc: lApi}}
+			}
 		}
 	}
 
 	// if no block sources available - fall back to public bitswap
 	if bg == nil {
-		bg, err = bitswap.InitBitswapGetter(ctx)
+		bg, err = bitswap.InitBitswapGetter(ctx, useFullCBG)
 		if err != nil {
 			return nil, nil, err
 		}
