@@ -2,9 +2,9 @@ module github.com/aschmahmann/filexp
 
 go 1.23.7
 
-// replace pulls in https://github.com/filecoin-project/go-hamt-ipld/pull/103
+// this replace pulls code loosely based on https://github.com/filecoin-project/go-hamt-ipld/pull/103
 // there may be a better implementation in https://github.com/filecoin-project/go-hamt-ipld/pull/115
-replace github.com/filecoin-project/go-hamt-ipld/v3 => github.com/aschmahmann/go-hamt-ipld/v3 v3.0.0-20230117061543-a9b3d6bfd710
+replace github.com/filecoin-project/go-hamt-ipld/v3 => github.com/aschmahmann/go-hamt-ipld/v3 v3.0.0-20250926042556-fdcd5dd823d0
 
 replace github.com/filecoin-project/filecoin-ffi => ./extern/filecoin-ffi // provided via a git submodule
 
@@ -33,7 +33,7 @@ require (
 	github.com/minio/sha256-simd v1.0.1
 	github.com/urfave/cli/v2 v2.27.5
 	github.com/whyrusleeping/cbor-gen v0.3.1
-	golang.org/x/sync v0.13.0
+	golang.org/x/sync v0.14.0
 	golang.org/x/sys v0.32.0
 	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da
 )
