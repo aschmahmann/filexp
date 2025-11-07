@@ -227,7 +227,7 @@ func main() {
 		// wait
 		s := <-sigs
 
-		log.Warnf("process received %s, cleaning up...", decodeSigname(s))
+		log.Warnf("process received %s, cleaning up...", filexp.DecodeSigname(s))
 
 		topCtxShutdown()
 	}()

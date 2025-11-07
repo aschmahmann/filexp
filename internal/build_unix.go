@@ -1,6 +1,6 @@
 //go:build !windows
 
-package main
+package filexp
 
 import (
 	"fmt"
@@ -10,7 +10,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-func decodeSigname(s os.Signal) string {
+func DecodeSigname(s os.Signal) string {
 	if sysSig, didCast := s.(syscall.Signal); didCast {
 		return unix.SignalName(sysSig)
 	}
