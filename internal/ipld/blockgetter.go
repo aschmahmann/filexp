@@ -7,9 +7,11 @@ import (
 	"time"
 
 	filexp "github.com/aschmahmann/filexp/internal"
+	lchtypes "github.com/filecoin-project/lotus/chain/types"
 	blkfmt "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
 	ipldcbor "github.com/ipfs/go-ipld-cbor"
+	"golang.org/x/sync/errgroup"
 )
 
 var log = filexp.Logger
@@ -136,4 +138,28 @@ func (bg *FullCBG) OrderedCids() []cid.Cid {
 	defer bg.mx.Unlock()
 
 	return bg.orderedCids
+}
+
+func LoadTipset(ctx context.Context, bg CountingBlockGetter, tsk *lchtypes.TipSetKey) (*lchtypes.TipSet, error) {
+
+	eg, ctx := errgroup.WithContext(ctx)
+	eg.SetLimit(8)
+
+	hdrs := make([]*lchtypes.BlockHeader, len(tsk.Cids()))
+	for i, c := range tsk.Cids() {
+		eg.Go(func() error {
+			b, err := bg.Get(ctx, c)
+			if err != nil {
+				return err
+			}
+			hdrs[i], err = lchtypes.DecodeBlock(b.RawData())
+			return err
+		})
+	}
+
+	if err := eg.Wait(); err != nil {
+		return nil, err
+	}
+
+	return lchtypes.NewTipSet(hdrs)
 }

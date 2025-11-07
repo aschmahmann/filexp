@@ -11,7 +11,6 @@ import (
 	lchtypes "github.com/filecoin-project/lotus/chain/types"
 	"github.com/ipfs/go-cid"
 	"github.com/urfave/cli/v2"
-	"golang.org/x/sync/errgroup"
 	"golang.org/x/xerrors"
 
 	// force bundle load, needed for actors.GetActorCodeID() to work
@@ -134,26 +133,7 @@ func getAnchorPoint(cctx *cli.Context, useFullCBG bool) (ipld.CountingBlockGette
 	}
 
 	if ts == nil {
-		eg, ctx := errgroup.WithContext(ctx)
-		eg.SetLimit(8)
-
-		hdrs := make([]*lchtypes.BlockHeader, len(tsk.Cids()))
-		for i, c := range tsk.Cids() {
-			eg.Go(func() error {
-				b, err := bg.Get(ctx, c)
-				if err != nil {
-					return err
-				}
-				hdrs[i], err = lchtypes.DecodeBlock(b.RawData())
-				return err
-			})
-		}
-
-		if err = eg.Wait(); err != nil {
-			return nil, nil, err
-		}
-
-		ts, err = lchtypes.NewTipSet(hdrs)
+		ts, err = ipld.LoadTipset(ctx, bg, tsk)
 		if err != nil {
 			return nil, nil, err
 		}
