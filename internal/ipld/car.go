@@ -1,10 +1,12 @@
 package ipld
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"time"
 
+	lchstore "github.com/filecoin-project/lotus/chain/store"
 	lchtypes "github.com/filecoin-project/lotus/chain/types"
 	"github.com/ipld/go-car/v2"
 	carbs "github.com/ipld/go-car/v2/blockstore"
@@ -27,6 +29,24 @@ func GetStateFromCar(ctx context.Context, srcSnapshot string, useFullCBG bool) (
 		return nil, nil, err
 	}
 	tsk := lchtypes.NewTipSetKey(carRoots...)
+
+	// check if the tsk is real, or an F3-type superblock
+	// https://github.com/filecoin-project/FIPs/blob/master/FRCs/frc-0108.md#v2-specification
+	if len(carRoots) == 1 {
+		b, err := carbs.Get(ctx, carRoots[0])
+		if err != nil {
+			return nil, nil, err
+		}
+
+		var maybeMetaF3 lchstore.SnapshotMetadata
+		if err := maybeMetaF3.UnmarshalCBOR(bytes.NewReader(b.RawData())); err == nil {
+			// unmarshal worked
+			if maybeMetaF3.Version != 2 {
+				return nil, nil, xerrors.Errorf("unexpected SnapshotMetadata version %d", maybeMetaF3.Version)
+			}
+			tsk = lchtypes.NewTipSetKey(maybeMetaF3.HeadTipsetKey...)
+		}
+	}
 
 	// Enable cancelation of tight loops reading from a car file:
 	// closing will result in errors from this point on
