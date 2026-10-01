@@ -84,7 +84,7 @@ func setupFilDHT(ctx context.Context, h host.Host) error {
 		}),
 		dht.DisableProviders(),
 		dht.DisableValues()}
-	d, err := dht.New(ctx, h, opts...)
+	d, err := dht.New(h, opts...)
 	if err != nil {
 		return err
 	}
